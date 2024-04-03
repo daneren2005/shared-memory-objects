@@ -1,0 +1,6 @@
+{
+	"editor.detectIndentation": true,
+	"editor.insertSpaces": false,
+	"editor.tabSize": 4,
+	"typescript.preferences.quoteStyle": "single"
+}

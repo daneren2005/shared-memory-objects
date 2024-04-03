@@ -1,0 +1,7 @@
+{
+	"*.{js,cjs,mjs}": ["npm run lint"],
+	"*.{ts,vue}": [
+		"npm run lint",
+		"bash -c 'npm run type-check'"
+	]
+}

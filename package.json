@@ -1,0 +1,57 @@
+{
+  "name": "@daneren2005/shared-memory-objects",
+  "version": "0.0.0",
+  "author": "daneren2005@gmail.com",
+  "description": "Creating objects with a SharedArrayBuffer",
+  "homepage": "https://github.com/daneren2005/shared-memory-objects#readme",
+  "keywords": [
+    "sharedarraybuffer"
+  ],
+  "license": "MIT",
+  
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/daneren2005/shared-memory-objects.git"
+  },
+  "bugs": {
+    "url": "https://github.com/daneren2005/shared-memory-objects/issues"
+  },
+
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./src/main.ts",
+  "scripts": {
+    "dev": "vite",
+    "lint": "eslint src/ --ext .js,.cjs,.mjs,.ts,.cts,.mts --ignore-path .gitignore",
+    "preview": "vite preview",
+    "publish": "npm publish --access public",
+    "start": "npm run dev",
+    "test:bench": "vitest bench",
+    "test:ui": "vitest --ui --api 9527",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "type-check": "tsc --build --force"
+  },
+  "devDependencies": {
+    "@rushstack/eslint-patch": "^1.10.1",
+    "@tsconfig/node18": "^18.2.4",
+    "@types/jsdom": "^21.1.6",
+    "@types/node": "^20.12.2",
+    "@vitest/coverage-v8": "^1.4.0",
+    "@vitest/ui": "^1.4.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-vitest": "^0.4.1",
+    "husky": "^9.0.11",
+    "jsdom": "^24.0.0",
+    "lint-staged": "^15.2.2",
+    "typescript": "^5.4.3",
+    "typescript-eslint": "^7.5.0",
+    "vite": "^5.2.0",
+    "vitest": "^1.4.0"
+  },
+  "dependencies": {
+    "pretty-bytes": "^6.1.1"
+  }
+}

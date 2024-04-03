@@ -1,0 +1,23 @@
+{
+	"include": ["src/**/*"],
+	"exclude": ["src/**/__tests__/*"],
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"useDefineForClassFields": true,
+
+		"moduleResolution": "bundler",
+    	"resolveJsonModule": true,
+
+		"noImplicitThis": true,
+		"verbatimModuleSyntax": true,
+    	"strict": true,
+
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true,
+
+		"composite": true,
+		"noEmit": true
+	}
+}
