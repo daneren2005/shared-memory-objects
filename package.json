@@ -1,6 +1,6 @@
 {
   "name": "@daneren2005/shared-memory-objects",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "author": "daneren2005@gmail.com",
   "description": "Creating objects with a SharedArrayBuffer",
   "homepage": "https://github.com/daneren2005/shared-memory-objects#readme",
@@ -8,7 +8,6 @@
     "sharedarraybuffer"
   ],
   "license": "MIT",
-  
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/daneren2005/shared-memory-objects.git"
@@ -16,10 +15,9 @@
   "bugs": {
     "url": "https://github.com/daneren2005/shared-memory-objects/issues"
   },
-
   "type": "module",
   "files": [
-    "dist"
+    "src/"
   ],
   "main": "./src/main.ts",
   "scripts": {
