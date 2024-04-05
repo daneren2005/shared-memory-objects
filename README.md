@@ -8,6 +8,50 @@ Each allocated memory location can be stored as an int pointer.  You can use `ge
 
 When passing memory to another thread you can either pass a pointer or a serialized version of the buffer position/byte offset in order to re-create the object in the other thread.
 
+## Getting Started
+`npm install @daneren2005/shared-memory-objects`
+
+Example to update blocks of memory from a thread.
+```
+let heap = new MemoryHeap();
+let memory = heap.allocUI32(4);
+
+// Pass memory to another thread
+thread.postMessage({
+	heap: heap.getSharedMemory(),
+	memory: memory.getSharedMemory()
+});
+
+// From worker thread re-construct memory and change it
+self.onmessage = (e) => {
+	let heap = new MemoryHeap(e.data.heap);
+	let memory = new AllocatedMemory(heap, e.data.memory);
+	memory.data[2] = 5;
+};
+```
+
+// Example to work with data structures from a thread.  When constructing a new structure you just pass the heap.  When re-creating a structure from an already initialized memory location pass the heap and the shared memory location for it.
+```
+let heap = new MemoryHeap();
+let list = new SharedList(heap);
+
+// Pass memory to another thread
+thread.postMessage({
+	heap: heap.getSharedMemory(),
+	list: list.getSharedMemory()
+});
+
+// From worker thread re-construct memory and change it
+self.onmessage = (e) => {
+	let heap = new MemoryHeap(e.data.heap);
+	let list = new SharedList(heap, e.data.list);
+
+	list.push(5);
+};
+```
+let mainList = new SharedList(memory);
+let secondList = new SharedList(memory, mainList.getSharedMemory());
+
 ## Data Structures
 - SharedList
 - SharedVector

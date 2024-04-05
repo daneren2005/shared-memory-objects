@@ -1,6 +1,6 @@
 {
   "name": "@daneren2005/shared-memory-objects",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "author": "daneren2005@gmail.com",
   "description": "Creating objects with a SharedArrayBuffer",
   "homepage": "https://github.com/daneren2005/shared-memory-objects#readme",
@@ -17,9 +17,13 @@
   },
   "type": "module",
   "files": [
-    "src/"
+    "src/",
+    "!__tests__"
   ],
   "main": "./src/main.ts",
+  "exports": {
+    ".": "./src/main.ts"
+  },
   "scripts": {
     "dev": "vite",
     "lint": "eslint src/ --ext .js,.cjs,.mjs,.ts,.cts,.mts --ignore-path .gitignore",
