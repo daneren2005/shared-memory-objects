@@ -1,6 +1,6 @@
 {
   "name": "@daneren2005/shared-memory-objects",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "author": "daneren2005@gmail.com",
   "description": "Creating objects with a SharedArrayBuffer",
   "homepage": "https://github.com/daneren2005/shared-memory-objects#readme",
