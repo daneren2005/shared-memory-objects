@@ -3,12 +3,13 @@ import MemoryBuffer from './memory-buffer';
 import MemoryHeap, { type MemoryHeapMemory } from './memory-heap';
 
 import SharedList, { type SharedListMemory } from './shared-list';
-import SharedMap from './shared-map';
+import SharedMap, { type SharedMapMemory } from './shared-map';
 import SharedPointerList from './shared-pointer-list';
 import SharedString from './shared-string';
-import SharedVector from './shared-vector';
+import SharedVector, { type SharedVectorMemory } from './shared-vector';
 
-import type { TypedArrayConstructor } from './interfaces/typed-array-constructor';
+export * from './interfaces/typed-array';
+export * from './interfaces/typed-array-constructor';
 
 export * from './utils/16-from-32-array';
 export * from './utils/16-from-64-array';
@@ -27,9 +28,9 @@ export {
 	SharedList,
 	type SharedListMemory,
 	SharedMap,
+	type SharedMapMemory,
 	SharedPointerList,
 	SharedString,
 	SharedVector,
-
-	type TypedArrayConstructor
+	type SharedVectorMemory
 };
