@@ -235,6 +235,20 @@ describe('SharedList', () => {
 		]);
 		expect(list.length).toEqual(1);
 	});
+
+	it('initWithBlock', () => {
+		let block = memory.allocUI32(SharedList.ALLOCATE_COUNT);
+		let list = new SharedList(memory, {
+			initWithBlock: block
+		});
+
+		list.insert(5);
+		list.insert(10);
+		list.insert(4);
+		list.deleteValue(10);
+		expect(list.length).toEqual(2);
+		expect(flat(list)).toEqual([5, 4]);
+	});
 });
 
 function flat(list: SharedList<any>) {
