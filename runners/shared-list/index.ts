@@ -1,5 +1,5 @@
-import MemoryHeap from '../../memory-heap';
-import SharedList from '../../shared-list';
+import MemoryHeap from '../../src/memory-heap';
+import SharedList from '../../src/shared-list';
 import TestWorker from './worker?worker';
 
 const heap = new MemoryHeap({

@@ -10,6 +10,12 @@ self.onmessage = (e) => {
 		memory = new MemoryHeap(e.data.init);
 		// @ts-expect-error
 		self.workerNumber = workerNumber = e.data.workerNumber;
+
+		memory.addOnGrowBufferHandlers(data => {
+			self.postMessage({
+				growBuffer: data
+			});
+		});
 	} else if(e.data.iterations) {
 		for(let i = 0; i < e.data.iterations; i++) {
 			let allocated = memory.allocUI32(e.data.allocations);
@@ -38,6 +44,8 @@ self.onmessage = (e) => {
 				}
 			}
 		}
+	} else if(e.data.growBuffer) {
+		memory.addSharedBuffer(e.data.growBuffer);
 	}
 };
 

@@ -1,6 +1,6 @@
 import AllocatedMemory, { type SharedAllocatedMemory } from './allocated-memory';
 import MemoryBuffer from './memory-buffer';
-import MemoryHeap, { type MemoryHeapMemory } from './memory-heap';
+import MemoryHeap, { type MemoryHeapMemory, type GrowBufferData } from './memory-heap';
 
 import SharedList, { type SharedListMemory } from './shared-list';
 import SharedMap, { type SharedMapMemory } from './shared-map';
@@ -24,6 +24,7 @@ export {
 	MemoryBuffer,
 	MemoryHeap,
 	type MemoryHeapMemory,
+	type GrowBufferData,
 
 	SharedList,
 	type SharedListMemory,

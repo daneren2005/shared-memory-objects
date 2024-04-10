@@ -1,18 +1,19 @@
-import AllocatedMemory from './allocated-memory';
+import AllocatedMemory, { type SharedAllocatedMemory } from './allocated-memory';
 import prettyBytes from 'pretty-bytes';
 import { MAX_BYTE_OFFSET_LENGTH, MAX_POSITION_LENGTH } from './utils/pointer';
 import MemoryBuffer from './memory-buffer';
 
-// TODO: Once we are certain this behaves correctly we should probably up to something like 1MB - we will have a ton of entities so don't want to waste time allocating new buffers constantly
 const DEFAULT_BUFFER_SIZE = 8_192;
+const BUFFER_SIZE_INDEX = 0;
+const BUFFER_COUNT_INDEX = 1;
 export default class MemoryHeap {
 	buffers: Array<MemoryBuffer>;
-	onGrowBufferHandlers: Array<OnGrowBuffer> = [];
+	private onGrowBufferHandlers: Array<OnGrowBuffer> = [];
 	isClone: boolean;
 	private memory: AllocatedMemory;
 
 	get bufferSize() {
-		return this.memory.data[0];
+		return this.memory.data[BUFFER_SIZE_INDEX];
 	}
 
 	constructor(config?: MemoryHeapConfig | MemoryHeapMemory) {
@@ -40,7 +41,7 @@ export default class MemoryHeap {
 			this.buffers = [
 				startBuffer
 			];
-			const data = startBuffer.callocAs('u32', 1);
+			const data = startBuffer.callocAs('u32', 2);
 			if(data) {
 				this.memory = new AllocatedMemory(this, {
 					bufferPosition: 0,
@@ -49,7 +50,8 @@ export default class MemoryHeap {
 			} else {
 				throw new Error('Failed to initialize first byte from buffer');
 			}
-			this.memory.data[0] = bufferSize;
+			this.memory.data[BUFFER_SIZE_INDEX] = bufferSize;
+			this.memory.data[BUFFER_COUNT_INDEX] = 1;
 			this.isClone = false;
 
 			for(let i = 1; i < (config?.initialBuffers ?? 1); i++) {
@@ -58,18 +60,14 @@ export default class MemoryHeap {
 		}
 	}
 
-	addSharedBuffer(buffer: SharedArrayBuffer) {
-		this.buffers.push(new MemoryBuffer({
-			buf: buffer,
+	addSharedBuffer(data: GrowBufferData) {
+		this.buffers[data.bufferPosition] = new MemoryBuffer({
+			buf: data.buffer,
 			skipInitialization: true
-		}));
+		});
 	}
 
 	private createBuffer(bufferSize?: number): MemoryBuffer {
-		if(this.isClone) {
-			throw new Error('Creating new buffer from worker threads not currently supported');
-		}
-
 		// TODO: Look into if we should turn off splitting - I think memory is going to get fragmented really quick if we free an Entity with 100 bytes and re-allocate a new one with 80 bytes and just lose the rest
 		//       As we add stuff like ListMemory that does tons of small allocations that might be fine since they can fill in any small space we have
 		return new MemoryBuffer({
@@ -77,9 +75,18 @@ export default class MemoryHeap {
 		});
 	}
 
+	addOnGrowBufferHandlers(handler: OnGrowBuffer) {
+		this.onGrowBufferHandlers.push(handler);
+	}
+
 	allocUI32(count: number): AllocatedMemory {
 		for(let i = 0; i < this.buffers.length; i++) {
 			const buffer = this.buffers[i];
+			// Should just mean we haven't synced this buffer from another thread yet
+			if(!buffer) {
+				continue;
+			}
+
 			// Should be fine to initialize all values as 0s since unsigned/signed ints and floats all store 0 as all 0s
 			const data = buffer.callocAs('u32', count);
 			if(data) {
@@ -96,8 +103,13 @@ export default class MemoryHeap {
 
 		// If we get here we need to grow another buffer to continue allocating new memory
 		const buffer = this.createBuffer();
-		this.buffers.push(buffer);
-		this.onGrowBufferHandlers.forEach(handler => handler(buffer.buf as SharedArrayBuffer));
+		let nextBufferPosition = Atomics.add(this.memory.data, BUFFER_COUNT_INDEX, 1);
+		// Setting index set by internal Atomic count so we can create new buffers from multiple threads and keep position consistent
+		this.buffers[nextBufferPosition] = buffer;
+		this.onGrowBufferHandlers.forEach(handler => handler({
+			bufferPosition: nextBufferPosition,
+			buffer: buffer.buf as SharedArrayBuffer
+		}));
 
 		const data = buffer.callocAs('u32', count);
 		if(data) {
@@ -108,6 +120,15 @@ export default class MemoryHeap {
 		} else {
 			throw new Error(`Unable to allocate ${count} numbers even after adding a new buffer`);
 		}
+	}
+
+	getFromSharedMemory(shared: SharedAllocatedMemory): AllocatedMemory | undefined {
+		// Should just mean it hasn't synced to this thread yet
+		if(this.buffers[shared.bufferPosition] === undefined) {
+			return undefined;
+		}
+
+		return new AllocatedMemory(this, shared);
 	}
 
 	get currentUsed() {
@@ -136,7 +157,11 @@ function myPrettyBytes(bytes: number) {
 	});
 }
 
-type OnGrowBuffer = (newBuffer: SharedArrayBuffer) => void;
+type OnGrowBuffer = (newBuffer: GrowBufferData) => void;
+interface GrowBufferData {
+	bufferPosition: number
+	buffer: SharedArrayBuffer
+}
 
 interface MemoryHeapConfig {
 	bufferSize?: number
@@ -146,4 +171,4 @@ interface MemoryHeapMemory {
 	buffers: Array<SharedArrayBuffer>
 }
 
-export type { MemoryHeapConfig, MemoryHeapMemory };
+export type { MemoryHeapConfig, MemoryHeapMemory, GrowBufferData };

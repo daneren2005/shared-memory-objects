@@ -2,7 +2,7 @@ import MemoryHeap from '../../src/memory-heap';
 import TestWorker from './worker?worker';
 
 const memory = new MemoryHeap({
-	bufferSize: 1024 * 1024
+	bufferSize: 1024 * 10
 });
 
 const workers: Array<Worker> = [];
@@ -29,6 +29,18 @@ workerAllocations.forEach((allocations, index) => {
 		if(e.data.done) {
 			workersDone++;
 			checkIfDone();
+		} else if(e.data.growBuffer) {
+			memory.addSharedBuffer(e.data.growBuffer);
+
+			for(let i = 0; i < workers.length; i++) {
+				if(i === index) {
+					continue;
+				}
+
+				workers[i].postMessage({
+					growBuffer: e.data.growBuffer
+				});
+			}
 		}
 	};
 	workers.push(worker);
@@ -49,7 +61,7 @@ function checkIfDone() {
 	if(workersDone >= workers.length) {
 		console.timeEnd('running allocations');
 		console.log('all workers done allocating - checking results');
-		console.log(`memory: ${memory.prettyMemory()}`);
+		console.log(`memory: ${memory.prettyMemory()} - ${memory.buffers.length} buffers`);
 
 		workers.forEach(worker => {
 			worker.postMessage({

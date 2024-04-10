@@ -62,6 +62,7 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 		this.memory = memory;
 
 		if(config && 'firstBlock' in config) {
+			// TODO: How to handle referencing memory we don't have access to yet because buffer not synced from worker?
 			this.firstBlock = new AllocatedMemory(memory, config.firstBlock);
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + (LENGTH_INDEX + 1) * Uint32Array.BYTES_PER_ELEMENT, 2);
 		} else {
@@ -119,6 +120,7 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 
 		if(lastBlockPointer) {
 			let { bufferPosition: lastBlockPosition, bufferByteOffset: lastBlockByteOffset } = getPointer(lastBlockPointer);
+			// TODO: How to handle referencing memory we don't have access to yet because buffer not synced from worker?
 			let lastBlock = new Uint32Array(this.memory.buffers[lastBlockPosition].buf, lastBlockByteOffset, 1);
 			storeRawPointer(lastBlock, 0, newBlockPointer);
 		} else {
@@ -175,6 +177,11 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 		let lastBlockByteOffset = 0;
 		while(nextBlockByteOffset) {
 			let memPool = this.memory.buffers[nextBlockPosition];
+			// Short circuit iterations if we can't access memory
+			if(!memPool) {
+				return;
+			}
+
 			let blockRecord = new Uint32Array(memPool.buf, nextBlockByteOffset, 2);
 			let blockData = this.getDataBlock(blockRecord);
 
