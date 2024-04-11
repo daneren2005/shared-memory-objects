@@ -34,7 +34,8 @@
     "test:ui": "vitest --ui --api 9527",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
-    "type-check": "tsc --build --force"
+    "type-check": "tsc --build --force",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@rushstack/eslint-patch": "^1.10.1",
