@@ -49,7 +49,8 @@ describe('SharedString', () => {
 		string.value = 'Yo';
 		expect(string.value).toEqual('Yo');
 		expect(copy.value).toEqual('Yo');
-		expect(memory.currentUsed).toBeLessThan(startMemory);
+		// NOTE: Only true if we have memory splitting turned on
+		// expect(memory.currentUsed).toBeLessThan(startMemory);
 
 		string.value = 'Yo Mama Is So Fat2222222222222222222222222222222222222222';
 		expect(memory.currentUsed).toBeGreaterThan(startMemory);

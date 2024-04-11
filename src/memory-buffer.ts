@@ -265,7 +265,7 @@ export default class MemoryBuffer {
 		let block = this._used;
 		while(block) {
 			if(block === addr) {
-				return this.blockSize(addr);
+				return this.blockSize(addr) - SIZEOF_MEM_BLOCK;
 			}
 			block = this.blockNext(block);
 		}

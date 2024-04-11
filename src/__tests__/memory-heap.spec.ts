@@ -24,8 +24,8 @@ describe('MemoryHeap', () => {
 		let copyMemory = new MemoryHeap(mainMemory.getSharedMemory());
 
 		let mainBlock = mainMemory.allocUI32(10);
-		let copyBlock = copyMemory.getFromSharedMemory(mainBlock.getSharedMemory());
-		expect(copyBlock?.data.length).toEqual(12);
+		let copyBlock = copyMemory.getSharedAlloc(mainBlock.getSharedMemory());
+		expect(copyBlock?.data.length).toEqual(10);
 
 		mainBlock.data[1] = 10;
 		expect(copyBlock?.data[1]).toEqual(10);
@@ -107,5 +107,18 @@ describe('MemoryHeap', () => {
 		}
 
 		expect(error).not.toBeNull();
+	});
+
+	it('Another thread updating old freed memory should not break', () => {
+		let memory = new MemoryHeap({ bufferSize: 200 });
+		let block1 = memory.allocUI32(16);
+		block1.free();
+
+		let block2 = memory.allocUI32(12);
+		let block3 = memory.allocUI32(4);
+
+		block1.data.fill(20);
+		memory.getSharedAlloc(block2.getSharedMemory());
+		memory.getSharedAlloc(block3.getSharedMemory());
 	});
 });

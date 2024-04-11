@@ -68,10 +68,14 @@ export default class MemoryHeap {
 	}
 
 	private createBuffer(bufferSize?: number): MemoryBuffer {
-		// TODO: Look into if we should turn off splitting - I think memory is going to get fragmented really quick if we free an Entity with 100 bytes and re-allocate a new one with 80 bytes and just lose the rest
-		//       As we add stuff like ListMemory that does tons of small allocations that might be fine since they can fill in any small space we have
 		return new MemoryBuffer({
-			buf: new SharedArrayBuffer(bufferSize ?? this.bufferSize)
+			buf: new SharedArrayBuffer(bufferSize ?? this.bufferSize),
+
+			// We can't use this unless we can 100% guarantee that every thread will stop using memory the instant it is freed
+			// ex: Allocate 16 bytes.  Thread A frees that allocation and then allocates 12 bytes and 4 bytes, but Thread B is mid-execution on the old allocation can changes the internal state of the 4-byte allocation breaking everything
+			// After the internal state is wrong MemoryBuffer will loose track of which blocks are where and how big they are
+			compact: false,
+			split: false
 		});
 	}
 
@@ -122,7 +126,7 @@ export default class MemoryHeap {
 		}
 	}
 
-	getFromSharedMemory(shared: SharedAllocatedMemory): AllocatedMemory | undefined {
+	getSharedAlloc(shared: SharedAllocatedMemory): AllocatedMemory | undefined {
 		// Should just mean it hasn't synced to this thread yet
 		if(this.buffers[shared.bufferPosition] === undefined) {
 			return undefined;
