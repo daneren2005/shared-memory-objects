@@ -4,6 +4,58 @@ import MemoryHeap from '../memory-heap';
 import SharedMap from '../shared-map';
 import SharedVector from '../shared-vector';
 
+const ITERATE_COUNT = 10_000;
+describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
+	let sharedList: SharedList;
+	bench('shared list', () => {
+		// eslint-disable-next-line
+		for(let number of sharedList) {}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap();
+				sharedList = new SharedList(memory);
+				for(let i = 0; i < ITERATE_COUNT; i++) {
+					sharedList.insert(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
+	let list: Array<number>;
+	bench('native array', () => {
+		// eslint-disable-next-line
+		for(let number of list) {}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				list = [];
+				for(let i = 0; i < ITERATE_COUNT; i++) {
+					list.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
+	let sharedVector: SharedVector;
+	bench('shared vector', () => {
+		// eslint-disable-next-line
+		for(let number of sharedVector) {}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 100
+				});
+				sharedVector = new SharedVector(memory);
+				for(let i = 0; i < ITERATE_COUNT; i++) {
+					sharedVector.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+});
+
 const INSERT_COUNT = 1_000;
 describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
 	bench('shared list', () => {
