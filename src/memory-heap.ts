@@ -84,6 +84,7 @@ export default class MemoryHeap {
 	}
 
 	allocUI32(count: number): AllocatedMemory {
+		count = Math.ceil(count);
 		for(let i = 0; i < this.buffers.length; i++) {
 			const buffer = this.buffers[i];
 			// Should just mean we haven't synced this buffer from another thread yet

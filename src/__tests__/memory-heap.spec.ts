@@ -121,4 +121,11 @@ describe('MemoryHeap', () => {
 		memory.getSharedAlloc(block2.getSharedMemory());
 		memory.getSharedAlloc(block3.getSharedMemory());
 	});
+
+	it('round allocs', () => {
+		let memory = new MemoryHeap({ bufferSize: 200 });
+
+		let allocated = memory.allocUI32(10.5);
+		expect(allocated.data.length).toEqual(11);
+	});
 });

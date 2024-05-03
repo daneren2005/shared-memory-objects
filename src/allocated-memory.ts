@@ -38,9 +38,14 @@ export default class AllocatedMemory {
 	}
 
 	getArray<T extends TypedArray>(type: TypedArrayConstructor<T>, offset: number, length: number): T {
-		if(import.meta.env.MODE === 'development') {
-			if(offset + length > this.data.length) {
-				console.warn(`Trying to grab more memory from AllocatedMemory.getArray then we have: ${offset} + ${length} > ${this.data.length}`);
+		if(import.meta.env.MODE === 'development' || import.meta.env.MODE === 'test') {
+			if((offset + length) * type.BYTES_PER_ELEMENT > this.data.byteLength) {
+				const message = `Trying to grab more memory from AllocatedMemory.getArray then we have: ${offset * type.BYTES_PER_ELEMENT} + ${length * type.BYTES_PER_ELEMENT} > ${this.data.byteLength}`;
+				if(import.meta.env.MODE === 'test') {
+					throw new Error(message);
+				} else {
+					console.warn(message);
+				}
 			}
 		}
 
