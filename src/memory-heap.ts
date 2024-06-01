@@ -32,6 +32,10 @@ export default class MemoryHeap {
 			});
 			this.isClone = true;
 		} else {
+			if(!('SharedArrayBuffer' in self)) {
+				console.warn('SharedArrayBuffer is not working: falling back to ArrayBuffer');
+			}
+
 			const bufferSize = config?.bufferSize ?? DEFAULT_BUFFER_SIZE;
 			if(bufferSize > MAX_BYTE_OFFSET_LENGTH) {
 				throw new Error(`Buffer size ${bufferSize} is greater than max ${MAX_BYTE_OFFSET_LENGTH} that we can reference with pointers`);
@@ -68,8 +72,16 @@ export default class MemoryHeap {
 	}
 
 	private createBuffer(bufferSize?: number): MemoryBuffer {
+		const usedBufferSize = bufferSize ?? this.bufferSize;
+		let buf: ArrayBuffer | SharedArrayBuffer;
+		if('SharedArrayBuffer' in globalThis) {
+			buf = new SharedArrayBuffer(usedBufferSize);
+		} else {
+			buf = new ArrayBuffer(usedBufferSize);
+		}
+
 		return new MemoryBuffer({
-			buf: new SharedArrayBuffer(bufferSize ?? this.bufferSize),
+			buf,
 
 			// We can't use this unless we can 100% guarantee that every thread will stop using memory the instant it is freed
 			// ex: Allocate 16 bytes.  Thread A frees that allocation and then allocates 12 bytes and 4 bytes, but Thread B is mid-execution on the old allocation can changes the internal state of the 4-byte allocation breaking everything
