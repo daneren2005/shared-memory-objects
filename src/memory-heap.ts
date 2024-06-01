@@ -32,7 +32,7 @@ export default class MemoryHeap {
 			});
 			this.isClone = true;
 		} else {
-			if(!('SharedArrayBuffer' in self)) {
+			if(!('SharedArrayBuffer' in globalThis)) {
 				console.warn('SharedArrayBuffer is not working: falling back to ArrayBuffer');
 			}
 
