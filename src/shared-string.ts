@@ -125,6 +125,10 @@ export default class SharedString {
 		return this.allocatedMemory.getSharedMemory();
 	}
 
+	get pointer() {
+		return this.allocatedMemory.pointer;
+	}
+
 	free() {
 		let { bufferPosition, bufferByteOffset } = loadPointer(this.allocatedMemory.data, POINTER_INDEX);
 		if(bufferByteOffset) {

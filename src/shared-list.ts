@@ -39,6 +39,7 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 	*/
 	private firstBlock: AllocatedMemory;
 	private uint16Array: Uint16Array;
+	onDelete?: (data: T) => void;
 
 	get length(): number {
 		return Atomics.load(this.firstBlock.data, LENGTH_INDEX);
@@ -169,6 +170,54 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 		}
 	}
 
+	clear() {
+		let firstBlockPointer, lastBlockPointer;
+		let updateWorked = false;
+		while(!updateWorked) {
+			firstBlockPointer = loadRawPointer(this.firstBlock.data, 0);
+			lastBlockPointer = loadRawPointer(this.firstBlock.data, 1);
+			// Already cleared
+			if(!lastBlockPointer) {
+				return;
+			}
+
+			updateWorked = replaceRawPointer(this.firstBlock.data, 1, 0, lastBlockPointer);
+		}
+		
+		// Shouldn't be possible to hit: making Typescript happy
+		if(!firstBlockPointer) {
+			return;
+		}
+
+		// We only want to update the last block if this is ran before something new was inserted
+		replaceRawPointer(this.firstBlock.data, 0, 0, firstBlockPointer);
+
+		// Iterate through  inaccessible nodes and delete them
+		let deletedItems = 0;
+		let nextBlockPointer = firstBlockPointer;
+		while(nextBlockPointer) {
+			let { bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = getPointer(nextBlockPointer);
+			let memPool = this.memory.buffers[nextBlockPosition];
+			// Short circuit iterations if we can't access memory
+			if(!memPool) {
+				break;
+			}
+
+			let blockRecord = new Uint32Array(memPool.buf, nextBlockByteOffset, 2);
+			nextBlockPointer = loadRawPointer(blockRecord, 0);
+			deletedItems++;
+
+			if(this.onDelete) {
+				this.onDelete(this.getDataBlock(blockRecord));
+			}
+
+			memPool.free(blockRecord.byteOffset);
+		}
+		
+		// Subtract by however many we deleted so that a insert during this operation is accurate
+		Atomics.sub(this.firstBlock.data, LENGTH_INDEX, deletedItems);
+	}
+
 	*[Symbol.iterator]() {
 		let currentIndex = 0;
 		let { bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(this.firstBlock.data, 0);
@@ -200,6 +249,10 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 					// If this is the last item, update last block to be previous location
 					if(!nextBlockByteOffset) {
 						storePointer(this.firstBlock.data, 1, lastBlockPosition, lastBlockByteOffset);
+					}
+
+					if(this.onDelete) {
+						this.onDelete(this.getDataBlock(blockRecord));
 					}
 
 					memPool.free(blockRecord.byteOffset);
@@ -256,6 +309,11 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 			});
 
 			({ bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(allocatedMemory.data, 0));
+
+			if(this.onDelete) {
+				this.onDelete(this.getDataBlock(allocatedMemory.data));
+			}
+
 			allocatedMemory.free();
 		}
 

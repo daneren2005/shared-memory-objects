@@ -1,5 +1,7 @@
 import SharedList from '../shared-list';
 import MemoryHeap from '../memory-heap';
+import SharedString from '../shared-string';
+import { getPointer } from '../main';
 
 describe('SharedList', () => {
 	let memory: MemoryHeap;
@@ -137,6 +139,62 @@ describe('SharedList', () => {
 		expect(memory.currentUsed).toEqual(startMemory);
 	});
 
+	it('can delete with onDelete SharedString', () => {
+		let list = new SharedList(memory);
+		list.onDelete = (pointerData => {
+			let string = new SharedString(memory, getPointer(pointerData[0]));
+			string.free();
+		});
+		list.insert((new SharedString(memory, 'Test')).pointer);
+		list.insert((new SharedString(memory, 'Test')).pointer);
+		list.insert((new SharedString(memory, 'Test')).pointer);
+
+		let startMemory = memory.currentUsed;
+		list.insert((new SharedString(memory, 'Test')).pointer);
+		list.deleteIndex(2);
+		expect(memory.currentUsed).toEqual(startMemory);
+	});
+
+	describe('clear', () => {
+		it('basic', () => {
+			let list = new SharedList(memory);
+			let startMemory = memory.currentUsed;
+
+			// Clear while already clear should be fine
+			list.clear();
+			expect(flat(list)).toEqual([]);
+			expect(list.length).toEqual(0);
+
+			for(let i = 0; i < 10; i++) {
+				list.insert(70);
+			}
+			list.clear();
+
+			expect(flat(list)).toEqual([]);
+			expect(list.length).toEqual(0);
+			expect(memory.currentUsed).toEqual(startMemory);
+		});
+
+		it('with onDelete SharedString', () => {
+			let list = new SharedList(memory);
+			list.onDelete = (pointerData => {
+				let string = new SharedString(memory, getPointer(pointerData[0]));
+				string.free();
+			});
+			let startMemory = memory.currentUsed;
+
+			for(let i = 0; i < 10; i++) {
+				const string = new SharedString(memory, 'Test');
+				list.insert(string.pointer);
+			}
+			list.clear();
+
+			expect(flat(list)).toEqual([]);
+			expect(list.length).toEqual(0);
+			expect(memory.currentUsed).toEqual(startMemory);
+		});
+	});
+
 	it('can share memory and insert/delete items from either instance', () => {
 		let mainList = new SharedList(memory);
 		let secondList = new SharedList(memory, mainList.getSharedMemory());
@@ -152,15 +210,32 @@ describe('SharedList', () => {
 	});
 	it.skip('can delete item mid-iteration');
 
-	it('free', () => {
-		let startMemory = memory.currentUsed;
-		let list = new SharedList(memory);
-		list.insert(5);
-		list.insert(10);
-		list.insert(4);
+	describe('free', () => {
+		it('basic', () => {
+			let startMemory = memory.currentUsed;
+			let list = new SharedList(memory);
+			list.insert(5);
+			list.insert(10);
+			list.insert(4);
+	
+			list.free();
+			expect(memory.currentUsed).toEqual(startMemory);
+		});
 
-		list.free();
-		expect(memory.currentUsed).toEqual(startMemory);
+		it('with onDelete SharedString', () => {
+			let startMemory = memory.currentUsed;
+			let list = new SharedList(memory);
+			list.onDelete = (pointerData => {
+				let string = new SharedString(memory, getPointer(pointerData[0]));
+				string.free();
+			});
+			list.insert((new SharedString(memory, 'Test')).pointer);
+			list.insert((new SharedString(memory, 'Test')).pointer);
+			list.insert((new SharedString(memory, 'Test')).pointer);
+	
+			list.free();
+			expect(memory.currentUsed).toEqual(startMemory);
+		});
 	});
 
 	it('with int32', () => {
