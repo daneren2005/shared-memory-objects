@@ -19,6 +19,23 @@ describe('MemoryHeap', () => {
 		expect(memory.currentUsed).toBeGreaterThan(midUsed + 20 * 4);
 		expect(memory.totalAllocated).toEqual(400);
 	});
+	it('auto grows memory with autoGrowSize: 80', () => {
+		let memory = new MemoryHeap({ autoGrowSize: 80 });
+
+		memory.allocUI32(1_500);
+		expect(memory.buffers.length).toEqual(1);
+
+		memory.allocUI32(200);
+		expect(memory.buffers.length).toEqual(2);
+		memory.allocUI32(200);
+		expect(memory.buffers.length).toEqual(2);
+		memory.allocUI32(200);
+		memory.allocUI32(1_300);
+		expect(memory.buffers.length).toEqual(2);
+
+		memory.allocUI32(200);
+		expect(memory.buffers.length).toEqual(3);
+	});
 	it('can re-create from raw memory and continue working', () => {
 		let mainMemory = new MemoryHeap({ bufferSize: 200 });
 		let copyMemory = new MemoryHeap(mainMemory.getSharedMemory());

@@ -6,6 +6,7 @@ import MemoryBuffer from './memory-buffer';
 const DEFAULT_BUFFER_SIZE = 8_192;
 const BUFFER_SIZE_INDEX = 0;
 const BUFFER_COUNT_INDEX = 1;
+const BUFFER_AUTO_GROW_INDEX = 2;
 export default class MemoryHeap {
 	buffers: Array<MemoryBuffer>;
 	private onGrowBufferHandlers: Array<OnGrowBuffer> = [];
@@ -45,7 +46,7 @@ export default class MemoryHeap {
 			this.buffers = [
 				startBuffer
 			];
-			const data = startBuffer.callocAs('u32', 2);
+			const data = startBuffer.callocAs('u32', 3);
 			if(data) {
 				this.memory = new AllocatedMemory(this, {
 					bufferPosition: 0,
@@ -56,6 +57,7 @@ export default class MemoryHeap {
 			}
 			this.memory.data[BUFFER_SIZE_INDEX] = bufferSize;
 			this.memory.data[BUFFER_COUNT_INDEX] = 1;
+			this.memory.data[BUFFER_AUTO_GROW_INDEX] = config?.autoGrowSize ?? 100;
 			this.isClone = false;
 
 			for(let i = 1; i < (config?.initialBuffers ?? 1); i++) {
@@ -71,6 +73,18 @@ export default class MemoryHeap {
 		});
 	}
 
+	private growBuffer() {
+		const buffer = this.createBuffer();
+		let nextBufferPosition = Atomics.add(this.memory.data, BUFFER_COUNT_INDEX, 1);
+		// Setting index set by internal Atomic count so we can create new buffers from multiple threads and keep position consistent
+		this.buffers[nextBufferPosition] = buffer;
+		this.onGrowBufferHandlers.forEach(handler => handler({
+			bufferPosition: nextBufferPosition,
+			buffer: buffer.buf as SharedArrayBuffer
+		}));
+
+		return buffer;
+	}
 	private createBuffer(bufferSize?: number): MemoryBuffer {
 		const usedBufferSize = bufferSize ?? this.bufferSize;
 		let buf: ArrayBuffer | SharedArrayBuffer;
@@ -107,6 +121,14 @@ export default class MemoryHeap {
 			// Should be fine to initialize all values as 0s since unsigned/signed ints and floats all store 0 as all 0s
 			const data = buffer.callocAs('u32', count);
 			if(data) {
+				// Auto grow when nearly full when we need buffer to already be sync'd between threads BEFORE we try to use it
+				if(i === (this.buffers.length - 1) && Atomics.load(this.memory.data, BUFFER_COUNT_INDEX) === this.buffers.length && this.memory.data[BUFFER_AUTO_GROW_INDEX] < 100 && this.memory.data[BUFFER_AUTO_GROW_INDEX] > 0) {
+					const percentFull = buffer.top / buffer.end;
+					if(percentFull > (this.memory.data[BUFFER_AUTO_GROW_INDEX] / 100)) {
+						this.growBuffer();
+					}
+				}
+
 				return new AllocatedMemory(this, {
 					data,
 					buffer
@@ -119,15 +141,7 @@ export default class MemoryHeap {
 		}
 
 		// If we get here we need to grow another buffer to continue allocating new memory
-		const buffer = this.createBuffer();
-		let nextBufferPosition = Atomics.add(this.memory.data, BUFFER_COUNT_INDEX, 1);
-		// Setting index set by internal Atomic count so we can create new buffers from multiple threads and keep position consistent
-		this.buffers[nextBufferPosition] = buffer;
-		this.onGrowBufferHandlers.forEach(handler => handler({
-			bufferPosition: nextBufferPosition,
-			buffer: buffer.buf as SharedArrayBuffer
-		}));
-
+		let buffer = this.growBuffer();
 		const data = buffer.callocAs('u32', count);
 		if(data) {
 			return new AllocatedMemory(this, {
@@ -183,6 +197,7 @@ interface GrowBufferData {
 interface MemoryHeapConfig {
 	bufferSize?: number
 	initialBuffers?: number
+	autoGrowSize?: number
 }
 interface MemoryHeapMemory {
 	buffers: Array<SharedArrayBuffer>

@@ -338,7 +338,7 @@ export default class MemoryBuffer {
 		this.state[STATE_ALIGN] = x;
 	}
 
-	protected get end() {
+	get end() {
 		return this.state[STATE_END];
 	}
 
@@ -346,7 +346,7 @@ export default class MemoryBuffer {
 		this.state[STATE_END] = x;
 	}
 
-	protected get top() {
+	get top() {
 		return Atomics.load(this.state, STATE_TOP);
 	}
 
