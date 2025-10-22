@@ -76,7 +76,7 @@ export default class SharedString {
 
 		let typedArray = TYPED_ARRAY_MAP[charType];
 		let allocatedMemory = this.memory.allocUI32(Math.ceil(value.length / (4 / typedArray.BYTES_PER_ELEMENT)));
-		let data = new typedArray(allocatedMemory.data.buffer, allocatedMemory.data.byteOffset, value.length);
+		let data = new typedArray(allocatedMemory.data.buffer as ArrayBuffer, allocatedMemory.data.byteOffset, value.length);
 		for(let i = 0; i < value.length; i++) {
 			data[i] = value.charCodeAt(i);
 		}

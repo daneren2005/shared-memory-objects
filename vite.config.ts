@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
 import { resolve } from 'node:path';
+// @ts-expect-error
+import dts from 'unplugin-dts/vite';
 
 export default defineConfig({
 	resolve: {
@@ -16,6 +18,7 @@ export default defineConfig({
 			fileName: 'shared-memory-objects'
 		}
 	},
+	plugins: [dts({ tsconfigPath: './tsconfig.app.json' })],
 
 	server: {
 		port: 8080,
