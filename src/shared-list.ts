@@ -287,14 +287,11 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 
 		switch(this.type) {
 			case TYPE.int32:
-				// @ts-expect-error
-				return new Int32Array(memory.buffer, startIndex, this.dataLength);
+				return new Int32Array(memory.buffer, startIndex, this.dataLength) as T;
 			case TYPE.uint32:
-				// @ts-expect-error
-				return new Uint32Array(memory.buffer, startIndex, this.dataLength);
+				return new Uint32Array(memory.buffer, startIndex, this.dataLength) as T;
 			case TYPE.float32:
-				// @ts-expect-error
-				return new Float32Array(memory.buffer, startIndex, this.dataLength);
+				return new Float32Array(memory.buffer, startIndex, this.dataLength) as T;
 			default:
 				throw new Error(`Unknown data block type ${this.type}`);
 		}

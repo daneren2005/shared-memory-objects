@@ -14,12 +14,20 @@ describe('SharedVector', () => {
 			type: Uint32Array
 		});
 
-		vector.push(10);
-		vector.push(52);
-		vector.push(4);
+		expect(vector.push(10)).toEqual(0);
+		expect(vector.push(52)).toEqual(1);
+		expect(vector.push(4)).toEqual(2);
+		vector.push(18);
+		vector.push(25);
 
-		expect(vector.length).toEqual(3);
-		expect(flat(vector)).toEqual([10, 52, 4]);
+		expect(vector.length).toEqual(5);
+		expect(flat(vector)).toEqual([10, 52, 4, 18, 25]);
+
+		expect([...vector.at(0)]).toEqual([10]);
+		expect(vector.get(0)).toEqual(10);
+		expect([...vector.at(1)]).toEqual([52]);
+		expect(vector.get(2)).toEqual(4);
+		expect(vector.get(4)).toEqual(25);
 	});
 
 	it('continually grows memory as needed', () => {
@@ -80,7 +88,7 @@ describe('SharedVector', () => {
 		});
 
 		vector.push(10);
-		vector.push([52, 32, 6]);
+		expect(vector.push([52, 32, 6])).toEqual(1);
 		vector.push([40, 41, 42]);
 
 		expect(vector.length).toEqual(3);
@@ -89,6 +97,13 @@ describe('SharedVector', () => {
 			52, 32, 6,
 			40, 41, 42
 		]);
+		expect([...vector.at(0)]).toEqual([10, 0, 0]);
+		expect([...vector.at(1)]).toEqual([52, 32, 6]);
+		expect([...vector.at(2)]).toEqual([40, 41, 42]);
+		expect(vector.get(0, 0)).toEqual(10);
+		expect(vector.get(0, 1)).toEqual(0);
+		expect(vector.get(1, 2)).toEqual(6);
+		expect(vector.get(2)).toEqual(40);
 
 		expect([...vector.pop()]).toEqual([40, 41, 42]);
 		expect(vector.length).toEqual(2);
@@ -96,12 +111,37 @@ describe('SharedVector', () => {
 			10, 0, 0,
 			52, 32, 6
 		]);
+		expect([...vector.at(0)]).toEqual([10, 0, 0]);
+		expect([...vector.at(1)]).toEqual([52, 32, 6]);
 
 		vector.deleteIndex(0);
 		expect(vector.length).toEqual(1);
 		expect(flat(vector)).toEqual([
 			52, 32, 6
 		]);
+		expect([...vector.at(0)]).toEqual([52, 32, 6]);
+		expect(vector.get(0)).toEqual(52);
+		expect(vector.get(0, 2)).toEqual(6);
+	});
+
+	it('float32', () => {
+		let vector = new SharedVector(memory, {
+			type: Float32Array
+		});
+
+		vector.push(10.5);
+		vector.push(52);
+		vector.push(4.5);
+		vector.push(13.5);
+		vector.push(6);
+
+		expect(vector.length).toEqual(5);
+		expect(flat(vector)).toEqual([10.5, 52, 4.5, 13.5, 6]);
+
+		expect([...vector.at(0)]).toEqual([10.5]);
+		expect(vector.get(0)).toEqual(10.5);
+		expect([...vector.at(1)]).toEqual([52]);
+		expect(vector.get(2)).toEqual(4.5);
 	});
 
 	it('can work from memory', () => {

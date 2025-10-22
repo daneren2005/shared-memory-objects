@@ -85,7 +85,24 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		this.cachedFullDataBlock = this.getFullDataBlock(this.dataLength);
 	}
 
-	push(values: number | Array<number>) {
+	at(index: number): T {
+		let length = this.length;
+		if(index >= length || index < 0) {
+			throw new Error(`${index} is out of bounds ${length}`);
+		}
+
+		let pointer = loadPointer(this.firstBlock.data, 0);
+		let dataMemory = new AllocatedMemory(this.memory, pointer);
+		return this.getDataBlock(dataMemory.data, index);
+	}
+	get(index: number, dataIndex = 0): number {
+		if(dataIndex >= this.dataLength) {
+			throw new Error(`${dataIndex} is out of dataLength bounds ${this.dataLength}`);
+		}
+		return this.at(index)[dataIndex];
+	}
+
+	push(values: number | Array<number>): number {
 		if(typeof values === 'number') {
 			values = [values];
 		}
@@ -103,6 +120,8 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		if(newLength >= this.bufferLength) {
 			this.growBuffer();
 		}
+
+		return currentLength;
 	}
 
 	pop(): T {
@@ -155,16 +174,13 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		let data: T;
 		switch(this.type) {
 			case TYPE.int32:
-				// @ts-expect-error
-				data = new Int32Array(rawData.data.buffer, rawData.bufferByteOffset, dataLength * this.bufferLength);
+				data = new Int32Array(rawData.data.buffer, rawData.bufferByteOffset, dataLength * this.bufferLength) as T;
 				break;
 			case TYPE.uint32:
-				// @ts-expect-error
-				data = new Uint32Array(rawData.data.buffer, rawData.bufferByteOffset, dataLength * this.bufferLength);
+				data = new Uint32Array(rawData.data.buffer, rawData.bufferByteOffset, dataLength * this.bufferLength) as T;
 				break;
 			case TYPE.float32:
-				// @ts-expect-error
-				data = new Float32Array(rawData.data.buffer, smemory.bufferByteOffset, dataLength * this.bufferLength);
+				data = new Float32Array(rawData.data.buffer, rawData.bufferByteOffset, dataLength * this.bufferLength) as T;
 				break;
 			default:
 				throw new Error(`Unknown data block type ${this.type}`);
@@ -178,14 +194,11 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	private getDataBlock(rawData: Uint32Array, index: number): T {
 		switch(this.type) {
 			case TYPE.int32:
-				// @ts-expect-error
-				return new Int32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength);
+				return new Int32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength) as T;
 			case TYPE.uint32:
-				// @ts-expect-error
-				return new Uint32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength);
+				return new Uint32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength) as T;
 			case TYPE.float32:
-				// @ts-expect-error
-				return new Float32Array(rawData.buffer, smemory.byteOffset + index * this.dataLength * 4, this.dataLength);
+				return new Float32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength) as T;
 			default:
 				throw new Error(`Unknown data block type ${this.type}`);
 		}
@@ -200,8 +213,24 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		let oldDataMemory = new AllocatedMemory(this.memory, oldPointer);
 		let oldDataBlock = this.getFullDataBlock(dataLength);
 		let newDataBlock = this.memory.allocUI32(newBufferLength * dataLength);
+
+		let newData: T;
+		switch(this.type) {
+			case TYPE.int32:
+				newData = new Int32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * this.bufferLength) as T;
+				break;
+			case TYPE.uint32:
+				newData = new Uint32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * this.bufferLength) as T;
+				break;
+			case TYPE.float32:
+				newData = new Float32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * this.bufferLength) as T;
+				break;
+			default:
+				throw new Error(`Unknown data block type ${this.type}`);
+		}
+
 		// Copy old buffer into new buffer
-		newDataBlock.data.set(oldDataBlock);
+		newData.set(oldDataBlock);
 
 		storePointer(this.firstBlock.data, 0, newDataBlock.bufferPosition, newDataBlock.bufferByteOffset);
 		this.bufferLength = newBufferLength;
