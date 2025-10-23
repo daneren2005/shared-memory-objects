@@ -1,7 +1,6 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
 import { resolve } from 'node:path';
-// @ts-expect-error
 import dts from 'unplugin-dts/vite';
 
 export default defineConfig({

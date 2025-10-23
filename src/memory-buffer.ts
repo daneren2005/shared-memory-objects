@@ -1,3 +1,7 @@
+// Just disabling this rule instead of re-writing for now to keep asa close to original in case we want to pull updates later
+// Doing `block && block.fill(fill)` instead of `if(block) { block.fill(fill); }` is valid code even if it is hard to parse
+/* eslint-disable @typescript-eslint/no-unused-expressions */
+
 import type { Pow2 } from './interfaces/pow2';
 import type { TypedArray } from './interfaces/typed-array';
 import { lock, unlock } from './lock/simple-lock';

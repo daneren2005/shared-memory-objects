@@ -73,9 +73,7 @@ const UINT_ARRAY_CTORS = {
 	u32: Uint32Array
 };
 const BIGINT_ARRAY_CTORS = {
-	// eslint-disable-next-line
 	i64: BigInt64Array,
-	// eslint-disable-next-line
 	u64: BigUint64Array
 };
 const TYPEDARRAY_CTORS = {
