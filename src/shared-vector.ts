@@ -10,7 +10,8 @@ enum TYPE {
 	float32
 }
 
-const LIST_LENGTH_INDEX = 1;
+const VECTOR_INDEX = 0;
+const LENGTH_INDEX = 1;
 const BUFFER_LENGTH_INDEX = 2;
 const TYPE_INDEX = 3;
 const DEFAULT_SIZE = 4;
@@ -23,7 +24,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	private uint16Array: Uint16Array;
 
 	get length(): number {
-		return Atomics.load(this.firstBlock.data, LIST_LENGTH_INDEX);
+		return Atomics.load(this.firstBlock.data, LENGTH_INDEX);
 	}
 	
 	get type(): number {
@@ -47,15 +48,41 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		Atomics.store(this.firstBlock.data, BUFFER_LENGTH_INDEX, value);
 	}
 
+	get pointer() {
+		return this.firstBlock.pointer;
+	}
+
 	private cachedFullDataBlock?: T;
 	private cachedPointer: number;
 
-	constructor(memory: MemoryHeap, config?: SharedVectorConfig<T> | SharedVectorMemory) {
+	constructor(memory: MemoryHeap, config?: SharedVectorConfig<T> | SharedVectorMemory | SharedVectorMemory & SharedVectorConfig<T>) {
 		this.memory = memory;
 
 		if(config && 'firstBlock' in config) {
 			this.firstBlock = new AllocatedMemory(memory, config.firstBlock);
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
+
+			// Pre-allocating memory and setting up in specific memory location
+			if('type' in config || 'dataLength' in config) {
+				let dataBlock = memory.allocUI32(DEFAULT_SIZE * (config.dataLength ?? 1));
+				storePointer(this.firstBlock.data, VECTOR_INDEX, dataBlock.bufferPosition, dataBlock.bufferByteOffset);
+				this.bufferLength = DEFAULT_SIZE;
+				this.dataLength = (config.dataLength ?? 1);
+			}
+			if('type' in config) {
+				const type = config?.type ?? Uint32Array;
+				if(type === Uint32Array) {
+					this.type = TYPE.uint32;
+				}
+				// @ts-expect-error
+				else if(type === Int32Array) {
+					this.type = TYPE.int32;
+				}
+				// @ts-expect-error
+				else if(type === Float32Array) {
+					this.type = TYPE.float32;
+				}
+			}
 		} else {
 			this.firstBlock = memory.allocUI32(SharedVector.ALLOCATE_COUNT);
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
@@ -63,7 +90,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 			let dataLength = config?.dataLength ?? 1;
 			let bufferLength = config?.bufferLength ?? DEFAULT_SIZE;
 			let dataBlock = memory.allocUI32(bufferLength * dataLength);
-			storePointer(this.firstBlock.data, 0, dataBlock.bufferPosition, dataBlock.bufferByteOffset);
+			storePointer(this.firstBlock.data, VECTOR_INDEX, dataBlock.bufferPosition, dataBlock.bufferByteOffset);
 			this.bufferLength = bufferLength;
 
 			const type = config?.type ?? Uint32Array;
@@ -91,7 +118,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 			throw new Error(`${index} is out of bounds ${length}`);
 		}
 
-		let pointer = loadPointer(this.firstBlock.data, 0);
+		let pointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
 		let dataMemory = new AllocatedMemory(this.memory, pointer);
 		return this.getDataBlock(dataMemory.data, index);
 	}
@@ -116,7 +143,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		let currentLength = this.length;
 		dataBlock.set(values, dataLength * currentLength);
 
-		let newLength = Atomics.add(this.firstBlock.data, LIST_LENGTH_INDEX, LIST_LENGTH_INDEX) + 1;
+		let newLength = Atomics.add(this.firstBlock.data, LENGTH_INDEX, 1) + 1;
 		if(newLength >= this.bufferLength) {
 			this.growBuffer();
 		}
@@ -125,9 +152,9 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	}
 
 	pop(): T {
-		let oldLength = Atomics.sub(this.firstBlock.data, LIST_LENGTH_INDEX, LIST_LENGTH_INDEX);
+		let oldLength = Atomics.sub(this.firstBlock.data, LENGTH_INDEX, LENGTH_INDEX);
 
-		let pointer = loadPointer(this.firstBlock.data, 0);
+		let pointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
 		let dataMemory = new AllocatedMemory(this.memory, pointer);
 		return this.getDataBlock(dataMemory.data, oldLength - 1);
 	}
@@ -146,15 +173,15 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 			}
 		}
 
-		Atomics.sub(this.firstBlock.data, LIST_LENGTH_INDEX, LIST_LENGTH_INDEX);
+		Atomics.sub(this.firstBlock.data, LENGTH_INDEX, LENGTH_INDEX);
 	}
 
 	clear() {
-		this.firstBlock.data[LIST_LENGTH_INDEX] = 0;
+		this.firstBlock.data[LENGTH_INDEX] = 0;
 	}
 
 	*[Symbol.iterator]() {
-		let pointer = loadPointer(this.firstBlock.data, 0);
+		let pointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
 		let dataMemory = new AllocatedMemory(this.memory, pointer);
 
 		for(let i = 0; i < this.length; i++) {
@@ -163,7 +190,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	}
 
 	private getFullDataBlock(dataLength: number): T {
-		let pointerNumber = Atomics.load(this.firstBlock.data, 0);
+		let pointerNumber = Atomics.load(this.firstBlock.data, VECTOR_INDEX);
 		if(this.cachedPointer === pointerNumber && this.cachedFullDataBlock) {
 			return this.cachedFullDataBlock;
 		}
@@ -209,7 +236,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		let newBufferLength = oldBufferLength * 2;
 		let dataLength = this.dataLength;
 
-		let oldPointer = loadPointer(this.firstBlock.data, 0);
+		let oldPointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
 		let oldDataMemory = new AllocatedMemory(this.memory, oldPointer);
 		let oldDataBlock = this.getFullDataBlock(dataLength);
 		let newDataBlock = this.memory.allocUI32(newBufferLength * dataLength);
@@ -232,13 +259,13 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		// Copy old buffer into new buffer
 		newData.set(oldDataBlock);
 
-		storePointer(this.firstBlock.data, 0, newDataBlock.bufferPosition, newDataBlock.bufferByteOffset);
+		storePointer(this.firstBlock.data, VECTOR_INDEX, newDataBlock.bufferPosition, newDataBlock.bufferByteOffset);
 		this.bufferLength = newBufferLength;
 		oldDataMemory.free();
 	}
 
 	free() {
-		let pointer = loadPointer(this.firstBlock.data, 0);
+		let pointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
 		let dataMemory = new AllocatedMemory(this.memory, pointer);
 
 		dataMemory.free();

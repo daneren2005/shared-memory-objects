@@ -59,6 +59,7 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 - SharedList
 - SharedVector
 - SharedMap
+- SharedPool - stable indexed data with a recycled pool and maximum internal array sizes
 - SharedString
 
 ## Thread Safety
