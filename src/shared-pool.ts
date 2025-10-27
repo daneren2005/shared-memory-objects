@@ -76,7 +76,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
 
 			let dataLength = config?.dataLength ?? 1;
-			let maxLength = config?.maxChunkSize ?? 1_000;
+			let maxLength = config?.maxChunkSize ?? 100;
 
 			this.pointerVector = new SharedVector(memory, {
 				type: Uint32Array,

@@ -111,13 +111,13 @@ shared list                                     2,154.19  0.4107   1.1497  0.464
 shared map                                        105.46  8.3417  15.2814  9.4824  9.5396  15.2814  15.2814  15.2814  ±4.05%       53
 shared vector                                  11,058.22  0.0799   0.3675  0.0904  0.0863   0.2084   0.2340   0.2833  ±0.66%     5530
 shared vector with correct amount initialized  16,369.28  0.0548   0.2825  0.0611  0.0575   0.1462   0.1620   0.2008  ±0.56%     8185
-shared pool                                    16,496.33  0.0537   0.2538  0.0606  0.0573   0.1396   0.1635   0.2081  ±0.55%     8249
+shared pool                                    10,653.47  0.0835   0.3480  0.0939  0.0900   0.2041   0.2222   0.2877  ±0.61%     5327
 native array                                   96,437.13  0.0079   0.2799  0.0104  0.0097   0.0234   0.0681   0.1194  ±0.63%    48219
 
 native array
-5.85x faster than shared pool
 5.89x faster than shared vector with correct amount initialized
 8.72x faster than shared vector
+9.37x faster than shared pool
 44.77x faster than shared list
 914.45x faster than shared map
 ```
