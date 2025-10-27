@@ -3,6 +3,7 @@ import SharedList from '../shared-list';
 import MemoryHeap from '../memory-heap';
 import SharedMap from '../shared-map';
 import SharedVector from '../shared-vector';
+import SharedPool from '../shared-pool';
 
 const ITERATE_COUNT = 10_000;
 describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
@@ -22,6 +23,42 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 		}
 	});
 
+	let sharedVector: SharedVector;
+	bench('shared vector', () => {
+		// eslint-disable-next-line
+		for(let number of sharedVector) {}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 100
+				});
+				sharedVector = new SharedVector(memory);
+				for(let i = 0; i < ITERATE_COUNT; i++) {
+					sharedVector.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
+	let sharedPool: SharedPool;
+	bench('shared pool', () => {
+		// eslint-disable-next-line
+		for(let number of sharedPool) {}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 100
+				});
+				sharedPool = new SharedPool(memory);
+				for(let i = 0; i < ITERATE_COUNT; i++) {
+					sharedPool.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
 	let list: Array<number>;
 	bench('native array', () => {
 		// eslint-disable-next-line
@@ -36,11 +73,16 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 			};
 		}
 	});
+});
 
+
+const INDEX_COUNT = 1_000;
+describe(`Shared Data Structures: ${INDEX_COUNT} indexed locations`, () => {
 	let sharedVector: SharedVector;
 	bench('shared vector', () => {
-		// eslint-disable-next-line
-		for(let number of sharedVector) {}
+		for(let i = 0; i < INDEX_COUNT; i++) {
+			sharedVector.get(randomIndex(sharedVector));
+		}
 	}, {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
@@ -48,8 +90,44 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 					bufferSize: 1024 * 100
 				});
 				sharedVector = new SharedVector(memory);
-				for(let i = 0; i < ITERATE_COUNT; i++) {
+				for(let i = 0; i < INDEX_COUNT; i++) {
 					sharedVector.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
+	let sharedPool: SharedPool;
+	bench('shared pool', () => {
+		for(let i = 0; i < INDEX_COUNT; i++) {
+			sharedPool.get(randomIndex(sharedPool));
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 100
+				});
+				sharedPool = new SharedPool(memory);
+				for(let i = 0; i < INDEX_COUNT; i++) {
+					sharedPool.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+	
+	let list: Array<number>;
+	bench('native array', () => {
+		for(let i = 0; i < INDEX_COUNT; i++) {
+			// eslint-disable-next-line
+			list[randomIndex(list)];
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				list = [];
+				for(let i = 0; i < INDEX_COUNT; i++) {
+					list.push(Math.random() * 1_000_000);
 				}
 			};
 		}
@@ -87,6 +165,14 @@ describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
 		let list = new SharedVector(memory, {
 			bufferLength: INSERT_COUNT + 2
 		});
+
+		for(let i = 0; i < INSERT_COUNT; i++) {
+			list.push(Math.random() * 1_000_000);
+		}
+	});
+	bench('shared pool', () => {
+		let memory = new MemoryHeap();
+		let list = new SharedPool(memory);
 
 		for(let i = 0; i < INSERT_COUNT; i++) {
 			list.push(Math.random() * 1_000_000);
@@ -180,7 +266,7 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () =>
 	let sharedVector: SharedVector;
 	bench('shared vector', () => {
 		for(let i = 0; i < DELETE_COUNT; i++) {
-			sharedVector.deleteIndex(randomIndex(sharedList));
+			sharedVector.deleteIndex(randomIndex(sharedVector));
 		}
 	}, {
 		setup: (task) => {
@@ -196,10 +282,120 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () =>
 		}
 	});
 
+	let sharedPool: SharedPool;
+	bench('shared pool', () => {
+		for(let i = 0; i < DELETE_COUNT; i++) {
+			sharedPool.deleteIndex(randomIndex(sharedPool));
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 16
+				});
+				sharedPool = new SharedPool(memory);
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					sharedPool.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
 	let nativeList: Array<number> = [];
 	bench('native array', () => {
 		for(let i = 0; i < DELETE_COUNT; i++) {
 			nativeList.splice(randomIndex(nativeList), 1);
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				nativeList = [];
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					nativeList.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+});
+
+describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random elements`, () => {
+	const RUN_COUNT = 2_000;
+
+	let sharedList: SharedList;
+	bench('shared list', () => {
+		for(let i = 0; i < RUN_COUNT; i++) {
+			if(Math.random() > 0.6) {
+				sharedList.deleteIndex(randomIndex(sharedList));
+			} else {
+				sharedList.insert(Math.random() * 1_000_000);
+			}
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap();
+				sharedList = new SharedList(memory);
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					sharedList.insert(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
+	let sharedVector: SharedVector;
+	bench('shared vector', () => {
+		for(let i = 0; i < RUN_COUNT; i++) {
+			if(Math.random() > 0.6) {
+				sharedVector.deleteIndex(randomIndex(sharedVector));
+			} else {
+				sharedVector.push(Math.random() * 1_000_000);
+			}
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 16
+				});
+				sharedVector = new SharedVector(memory);
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					sharedVector.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
+	let sharedPool: SharedPool;
+	bench('shared pool', () => {
+		for(let i = 0; i < RUN_COUNT; i++) {
+			if(Math.random() > 0.6) {
+				sharedPool.deleteIndex(randomIndex(sharedPool));
+			} else {
+				sharedPool.push(Math.random() * 1_000_000);
+			}
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 16
+				});
+				sharedPool = new SharedPool(memory);
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					sharedPool.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
+	let nativeList: Array<number> = [];
+	bench('native array', () => {
+		for(let i = 0; i < RUN_COUNT; i++) {
+			if(Math.random() > 0.6) {
+				nativeList.splice(randomIndex(nativeList), 1);
+			} else {
+				nativeList.push(Math.random() * 1_000_000);
+			}
 		}
 	}, {
 		setup: (task) => {
