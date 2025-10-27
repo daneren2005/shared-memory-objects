@@ -76,6 +76,7 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 The tl;dr is that none of these data structures are close to what you can get by just using native data structures, but I wasn't expecting them to be with their overhead.
 They are all significantly slower at iterating and accessing an indexed location.  The SharedList is slowest at everything.
 The SharedPool is the closest to native performance when doing a bunch of random deletes and inserts, which is what I use it for as the memory storage for components in my own ECS framework.
+Since indexed access is about 1/5 the speed of just using a native JS array, there needs to be a lot of work offloaded into a separate thread of make it worth it.
 
 Shared Data Structures: 10000 iterations 36242ms
 ```
@@ -94,13 +95,13 @@ native array
 Shared Data Structures: 1000 indexed locations 4258ms
 ```
 name                   hz     min     max    mean     p75     p99    p995    p999     rme  samples
-shared vector   13,826.92  0.0619  0.9643  0.0723  0.0663  0.1875  0.2207  0.3182  ±0.90%     6914
-shared pool     12,645.45  0.0707  0.4806  0.0791  0.0749  0.2060  0.2268  0.3011  ±0.72%     6323
-native array   120,394.24  0.0073  0.1933  0.0083  0.0078  0.0146  0.0218  0.0871  ±0.42%    60198
+shared vector   28,917.42  0.0311  0.2926  0.0346  0.0328  0.0631  0.0822  0.1994  ±0.50%    14459
+shared pool     20,636.58  0.0446  0.2953  0.0485  0.0464  0.0851  0.1039  0.2063  ±0.45%    10319
+native array   120,189.16  0.0073  0.2456  0.0083  0.0078  0.0144  0.0189  0.1003  ±0.47%    60095
 
 native array
-8.71x faster than shared vector
-9.52x faster than shared pool
+4.16x faster than shared vector
+5.82x faster than shared pool
 ```
 
 Shared Data Structures: 1000 inserts 3685ms

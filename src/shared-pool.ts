@@ -126,8 +126,12 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	get(index: number, dataIndex = 0): number {
 		if(dataIndex >= this.dataLength) {
 			throw new Error(`${dataIndex} is out of dataLength bounds ${this.dataLength}`);
+		} else if(index >= this.length || index < 0) {
+			throw new Error(`${index} is out of bounds ${this.length}`);
 		}
-		return this.at(index)[dataIndex];
+
+		let dataBlock = this.getFullDataBlock(index);
+		return dataBlock[index * this.dataLength + dataIndex];
 	}
 
 	push(values: number | Array<number>): number {
