@@ -22,7 +22,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	static readonly ALLOCATE_COUNT = 3 + SharedVector.ALLOCATE_COUNT * 2;
 	private memory: MemoryHeap;
 
-	// Current Length, Buffer Length, Type/DataLength, MaxChunkLength, Pointer vector
+	// Current Length, Type/DataLength, MaxChunkLength, Pointer vector, Recycle vector
 	private firstBlock: AllocatedMemory;
 	private uint16Array: Uint16Array;
 	private pointerVector: SharedVector<Uint32Array>;
@@ -131,7 +131,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 		}
 
 		let dataBlock = this.getFullDataBlock(index);
-		return dataBlock[index * this.dataLength + dataIndex];
+		return dataBlock[(index % this.maxChunkSize) * this.dataLength + dataIndex];
 	}
 
 	push(values: number | Array<number>): number {
