@@ -12,16 +12,14 @@ enum TYPE {
 }
 
 const LENGTH_INDEX = 0;
-const BUFFER_LENGTH_INDEX = 1;
-const TYPE_INDEX = 2;
-const MAX_CHUNK_SIZE_INDEX = 3;
-const POINTERS_INDEX = 4;
+const TYPE_INDEX = 1;
+const MAX_CHUNK_SIZE_INDEX = 2;
+const POINTERS_INDEX = 3;
 const RECYCLE_INDEX = POINTERS_INDEX + SharedVector.ALLOCATE_COUNT;
-const DEFAULT_SIZE = 4;
 
 // Array with stable indexes and maximum contiguous memory sizes (necessary to fit large data sets into max 1MB buffers)
 export default class SharedPool<T extends Uint32Array | Int32Array | Float32Array = Uint32Array> implements Iterable<T> {
-	static readonly ALLOCATE_COUNT = 4 + SharedVector.ALLOCATE_COUNT * 2;
+	static readonly ALLOCATE_COUNT = 3 + SharedVector.ALLOCATE_COUNT * 2;
 	private memory: MemoryHeap;
 
 	// Current Length, Buffer Length, Type/DataLength, MaxChunkLength, Pointer vector
@@ -29,6 +27,8 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	private uint16Array: Uint16Array;
 	private pointerVector: SharedVector<Uint32Array>;
 	private recycleVector: SharedVector<Uint32Array>;
+
+	private cachedFullDataBlock: { [key: number]: T } = {};
 
 	get length(): number {
 		return Atomics.load(this.firstBlock.data, LENGTH_INDEX) - this.recycleVector.length;
@@ -51,14 +51,6 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	}
 	private set dataLength(value: number) {
 		Atomics.store(this.uint16Array, 1, value);
-	}
-
-	// TODO: Does buffer length do anything here?
-	get bufferLength(): number {
-		return Atomics.load(this.firstBlock.data, BUFFER_LENGTH_INDEX);
-	}
-	private set bufferLength(value: number) {
-		Atomics.store(this.firstBlock.data, BUFFER_LENGTH_INDEX, value);
 	}
 
 	constructor(memory: MemoryHeap, config?: SharedPoolConfig<T> | SharedPoolMemory) {
@@ -84,7 +76,6 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
 
 			let dataLength = config?.dataLength ?? 1;
-			let bufferLength = DEFAULT_SIZE;
 			let maxLength = config?.maxChunkSize ?? 1_000;
 
 			this.pointerVector = new SharedVector(memory, {
@@ -105,7 +96,6 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 			// TODO: Dynamically grow sub-vectors insted of using fixed length versions
 			let firstArray = memory.allocUI32(maxLength * dataLength);
 			this.pointerVector.push(firstArray.pointer);
-			this.bufferLength = bufferLength;
 
 			const type = config?.type ?? Uint32Array;
 			if(type === Uint32Array) {
@@ -199,6 +189,10 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 
 	private getFullDataBlock(index: number) {
 		let pointerIndex = Math.floor(index / this.maxChunkSize);
+		let cachedDataBlock = this.cachedFullDataBlock[pointerIndex];
+		if(cachedDataBlock) {
+			return cachedDataBlock;
+		}
 		if(pointerIndex >= this.pointerVector.length) {
 			let newArray = this.memory.allocUI32(this.maxChunkSize * this.dataLength);
 			this.pointerVector.push(newArray.pointer);
@@ -220,7 +214,8 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 			default:
 				throw new Error(`Unknown data block type ${this.type}`);
 		}
-		
+
+		this.cachedFullDataBlock[pointerIndex] = data;
 		return data;
 	}
 
