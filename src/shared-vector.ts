@@ -109,7 +109,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		}
 
 		this.cachedPointer = this.firstBlock.data[0];
-		this.cachedFullDataBlock = this.getFullDataBlock(this.dataLength);
+		this.cachedFullDataBlock = this.getFullDataBlock();
 	}
 
 	at(index: number): T {
@@ -118,9 +118,8 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 			throw new Error(`${index} is out of bounds ${length}`);
 		}
 
-		let pointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
-		let dataMemory = new AllocatedMemory(this.memory, pointer);
-		return this.getDataBlock(dataMemory.data, index);
+		let dataBlock = this.getFullDataBlock();
+		return this.getDataBlock(dataBlock, index);
 	}
 	get(index: number, dataIndex = 0): number {
 		if(dataIndex >= this.dataLength) {
@@ -139,7 +138,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 			throw new Error(`Can't insert ${values.length} array into shared list of ${dataLength} dataLength`);
 		}
 
-		let dataBlock = this.getFullDataBlock(dataLength);
+		let dataBlock = this.getFullDataBlock();
 		let currentLength = this.length;
 		dataBlock.set(values, dataLength * currentLength);
 
@@ -154,9 +153,8 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	pop(): T {
 		let oldLength = Atomics.sub(this.firstBlock.data, LENGTH_INDEX, LENGTH_INDEX);
 
-		let pointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
-		let dataMemory = new AllocatedMemory(this.memory, pointer);
-		return this.getDataBlock(dataMemory.data, oldLength - 1);
+		let dataBlock = this.getFullDataBlock();
+		return this.getDataBlock(dataBlock, oldLength - 1);
 	}
 
 	deleteIndex(index: number) {
@@ -166,7 +164,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		}
 
 		let dataLength = this.dataLength;
-		let dataBlock = this.getFullDataBlock(dataLength);
+		let dataBlock = this.getFullDataBlock();
 		for(let i = index; i < length; i++) {
 			for(let j = 0; j < dataLength; j++) {
 				dataBlock[i * dataLength + j] = dataBlock[(i + 1) * dataLength + j];
@@ -181,15 +179,14 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	}
 
 	*[Symbol.iterator]() {
-		let pointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
-		let dataMemory = new AllocatedMemory(this.memory, pointer);
+		let dataBlock = this.getFullDataBlock();
 
 		for(let i = 0; i < this.length; i++) {
-			yield this.getDataBlock(dataMemory.data, i);
+			yield this.getDataBlock(dataBlock, i);
 		}
 	}
 
-	private getFullDataBlock(dataLength: number): T {
+	private getFullDataBlock(): T {
 		let pointerNumber = Atomics.load(this.firstBlock.data, VECTOR_INDEX);
 		if(this.cachedPointer === pointerNumber && this.cachedFullDataBlock) {
 			return this.cachedFullDataBlock;
@@ -201,13 +198,13 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		let data: T;
 		switch(this.type) {
 			case TYPE.int32:
-				data = new Int32Array(rawData.data.buffer, rawData.bufferByteOffset, dataLength * this.bufferLength) as T;
+				data = new Int32Array(rawData.data.buffer, rawData.bufferByteOffset, this.dataLength * this.bufferLength) as T;
 				break;
 			case TYPE.uint32:
-				data = new Uint32Array(rawData.data.buffer, rawData.bufferByteOffset, dataLength * this.bufferLength) as T;
+				data = new Uint32Array(rawData.data.buffer, rawData.bufferByteOffset, this.dataLength * this.bufferLength) as T;
 				break;
 			case TYPE.float32:
-				data = new Float32Array(rawData.data.buffer, rawData.bufferByteOffset, dataLength * this.bufferLength) as T;
+				data = new Float32Array(rawData.data.buffer, rawData.bufferByteOffset, this.dataLength * this.bufferLength) as T;
 				break;
 			default:
 				throw new Error(`Unknown data block type ${this.type}`);
@@ -218,17 +215,9 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 
 		return data;
 	}
-	private getDataBlock(rawData: Uint32Array, index: number): T {
-		switch(this.type) {
-			case TYPE.int32:
-				return new Int32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength) as T;
-			case TYPE.uint32:
-				return new Uint32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength) as T;
-			case TYPE.float32:
-				return new Float32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength) as T;
-			default:
-				throw new Error(`Unknown data block type ${this.type}`);
-		}
+	private getDataBlock(rawData: T, index: number): T {
+		const start = index * this.dataLength;
+		return rawData.subarray(start, start + this.dataLength) as T;
 	}
 
 	private growBuffer() {
@@ -238,7 +227,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 
 		let oldPointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
 		let oldDataMemory = new AllocatedMemory(this.memory, oldPointer);
-		let oldDataBlock = this.getFullDataBlock(dataLength);
+		let oldDataBlock = this.getFullDataBlock();
 		let newDataBlock = this.memory.allocUI32(newBufferLength * dataLength);
 
 		let newData: T;

@@ -220,16 +220,8 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	}
 
 	private getDataBlock(rawData: T, index: number): T {
-		switch(this.type) {
-			case TYPE.int32:
-				return new Int32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength) as T;
-			case TYPE.uint32:
-				return new Uint32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength) as T;
-			case TYPE.float32:
-				return new Float32Array(rawData.buffer, rawData.byteOffset + index * this.dataLength * 4, this.dataLength) as T;
-			default:
-				throw new Error(`Unknown data block type ${this.type}`);
-		}
+		const start = index * this.dataLength;
+		return rawData.subarray(start, start + this.dataLength) as T;
 	}
 
 	free() {
