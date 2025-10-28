@@ -18,6 +18,7 @@ const POINTERS_INDEX = 3;
 const RECYCLE_INDEX = POINTERS_INDEX + SharedVector.ALLOCATE_COUNT;
 
 // Array with stable indexes and maximum contiguous memory sizes (necessary to fit large data sets into max 1MB buffers)
+// https://plflib.org/colony.htm for future enhancements - it seems to be an optimized version of what we were aiming for with this
 export default class SharedPool<T extends Uint32Array | Int32Array | Float32Array = Uint32Array> implements Iterable<T> {
 	static readonly ALLOCATE_COUNT = 3 + SharedVector.ALLOCATE_COUNT * 2;
 	private memory: MemoryHeap;
@@ -51,6 +52,10 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	}
 	private set dataLength(value: number) {
 		Atomics.store(this.uint16Array, 1, value);
+	}
+
+	get bufferLength(): number {
+		return this.maxChunkSize * this.pointerVector.length;
 	}
 
 	constructor(memory: MemoryHeap, config?: SharedPoolConfig<T> | SharedPoolMemory) {

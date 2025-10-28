@@ -28,6 +28,7 @@ describe('SharedPool', () => {
 		expect([...vector.at(1)]).toEqual([52]);
 		expect(vector.get(2)).toEqual(4);
 		expect(vector.get(4)).toEqual(25);
+		expect(vector.bufferLength).toEqual(100);
 	});
 
 	it('continually grows memory as needed', () => {
@@ -37,16 +38,17 @@ describe('SharedPool', () => {
 		});
 
 		const expectedValues = [];
-		for(let i = 0; i < 1_000; i++) {
+		for(let i = 0; i < 1_020; i++) {
 			vector.push(i);
 			expectedValues.push(i);
 		}
 
-		expect(vector.length).toEqual(1_000);
+		expect(vector.length).toEqual(1_020);
 		expect(flat(vector)).toEqual(expectedValues);
-		for(let i = 0; i < 1_000; i++) {
+		for(let i = 0; i < 1_020; i++) {
 			expect(vector.get(i)).toEqual(i);
 		}
+		expect(vector.bufferLength).toEqual(1_100);
 	});
 
 	it('deleteIndex', () => {
