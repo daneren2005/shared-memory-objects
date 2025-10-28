@@ -64,6 +64,8 @@ describe('SharedPool', () => {
 		vector.deleteIndex(1);
 		expect(vector.length).toEqual(2);
 		expect(flat(vector)).toEqual([10, 4]);
+		// Stable index
+		expect(vector.get(2)).toEqual(4);
 		
 		vector.deleteIndex(0);
 		expect(vector.length).toEqual(1);
@@ -74,6 +76,12 @@ describe('SharedPool', () => {
 		vector.push(65);
 		expect(vector.length).toEqual(3);
 		expect(flat(vector)).toEqual([97, 65, 4]);
+
+		// Can delete last element
+		vector.deleteIndex(1);
+		vector.deleteIndex(2);
+		expect(vector.length).toEqual(1);
+		expect(flat(vector)).toEqual([97]);
 	});
 
 	it('with dataLength: 3', () => {

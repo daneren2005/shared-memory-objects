@@ -115,23 +115,17 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	}
 
 	at(index: number): T {
-		let length = this.length;
-		if(index >= length || index < 0) {
-			throw new Error(`${index} is out of bounds ${length}`);
-		}
-
 		let dataBlock = this.getFullDataBlock(index);
 		return this.getDataBlock(dataBlock, index % this.maxChunkSize);
 	}
 	get(index: number, dataIndex = 0): number {
-		if(dataIndex >= this.dataLength) {
-			throw new Error(`${dataIndex} is out of dataLength bounds ${this.dataLength}`);
-		} else if(index >= this.length || index < 0) {
-			throw new Error(`${index} is out of bounds ${this.length}`);
+		const dataLength = this.dataLength;
+		if(dataIndex >= dataLength) {
+			throw new Error(`${dataIndex} is out of dataLength bounds ${dataLength}`);
 		}
 
 		let dataBlock = this.getFullDataBlock(index);
-		return dataBlock[(index % this.maxChunkSize) * this.dataLength + dataIndex];
+		return dataBlock[(index % this.maxChunkSize) * dataLength + dataIndex];
 	}
 
 	push(values: number | Array<number>): number {
@@ -159,11 +153,6 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	}
 
 	deleteIndex(index: number) {
-		let length = this.length;
-		if(index >= length || index < 0) {
-			throw new Error(`${index} is out of bounds ${length}`);
-		}
-		
 		this.recycleVector.push(index);
 	}
 
