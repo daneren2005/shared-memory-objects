@@ -142,6 +142,46 @@ describe('SharedPool', () => {
 		expect(vector.get(2)).toEqual(4.5);
 	});
 
+	it('float64', () => {
+		const startMemory = memory.currentUsed;
+		let vector = new SharedPool(memory, {
+			type: Float64Array
+		});
+		expect(vector.byteMultipler).toEqual(2);
+		let cloneVector = new SharedPool(memory, vector.getSharedMemory());
+		expect(cloneVector.byteMultipler).toEqual(2);
+
+		// Float64 should be allocating more than normal 32bit ones
+		let afterFloat64Memory = memory.currentUsed;
+		new SharedPool(memory);
+		expect(memory.currentUsed - afterFloat64Memory).toBeLessThan(afterFloat64Memory - startMemory);
+
+		vector.push(10.5);
+		vector.push(52);
+		vector.push(4.5);
+		vector.push(13.5);
+		vector.push(6);
+		// JS uses Float64 for numbers by default, so we should be able to store/retrieve max sized numbers like normal
+		vector.push(Number.MAX_SAFE_INTEGER);
+		vector.push(Number.MAX_VALUE);
+
+		expect(vector.length).toEqual(7);
+		expect(flat(vector)).toEqual([10.5, 52, 4.5, 13.5, 6, Number.MAX_SAFE_INTEGER, Number.MAX_VALUE]);
+
+		expect([...vector.at(0)]).toEqual([10.5]);
+		expect(vector.get(0)).toEqual(10.5);
+		expect([...vector.at(1)]).toEqual([52]);
+		expect(vector.get(2)).toEqual(4.5);
+
+		// Add ton of numbers to make sure memory isn't going out of bounds
+		for(let i = 0; i < 1_000; i++) {
+			vector.push(i);
+		}
+		for(let i = 0; i < 1_000; i++) {
+			expect(vector.get(i + 7)).toEqual(i);
+		}
+	});
+
 	it('can work from memory', () => {
 		let mainVector = new SharedPool(memory, {
 			type: Uint32Array,

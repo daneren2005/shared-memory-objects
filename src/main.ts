@@ -17,6 +17,7 @@ export * from './utils/16-from-32-array';
 export * from './utils/16-from-64-array';
 export * from './utils/atomic-math';
 export * from './utils/float32-atomics';
+export * from './utils/float64-atomics';
 export * from './utils/pointer';
 export * from './lock/simple-lock';
 export * from './lock/read-write-lock';

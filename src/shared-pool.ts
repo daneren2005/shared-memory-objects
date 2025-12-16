@@ -8,7 +8,8 @@ import { getPointer } from './utils/pointer';
 enum TYPE {
 	uint32,
 	int32,
-	float32
+	float32,
+	float64
 }
 
 const LENGTH_INDEX = 0;
@@ -19,7 +20,7 @@ const RECYCLE_INDEX = POINTERS_INDEX + SharedVector.ALLOCATE_COUNT;
 
 // Array with stable indexes and maximum contiguous memory sizes (necessary to fit large data sets into max 1MB buffers)
 // https://plflib.org/colony.htm for future enhancements - it seems to be an optimized version of what we were aiming for with this
-export default class SharedPool<T extends Uint32Array | Int32Array | Float32Array = Uint32Array> implements Iterable<T> {
+export default class SharedPool<T extends Uint32Array | Int32Array | Float32Array | Float64Array = Uint32Array> implements Iterable<T> {
 	static readonly ALLOCATE_COUNT = 3 + SharedVector.ALLOCATE_COUNT * 2;
 	private memory: MemoryHeap;
 
@@ -56,6 +57,13 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 
 	get bufferLength(): number {
 		return this.maxChunkSize * this.pointerVector.length;
+	}
+	get byteMultipler(): number {
+		if(this.type === TYPE.float64) {
+			return 2;
+		} else {
+			return 1;
+		}
 	}
 
 	constructor(memory: MemoryHeap, config?: SharedPoolConfig<T> | SharedPoolMemory) {
@@ -98,10 +106,6 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 				}
 			});
 
-			// TODO: Dynamically grow sub-vectors insted of using fixed length versions
-			let firstArray = memory.allocUI32(maxLength * dataLength);
-			this.pointerVector.push(firstArray.pointer);
-
 			const type = config?.type ?? Uint32Array;
 			if(type === Uint32Array) {
 				this.type = TYPE.uint32;
@@ -113,9 +117,15 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 			// @ts-expect-error
 			else if(type === Float32Array) {
 				this.type = TYPE.float32;
+			// @ts-expect-error
+			} else if(type === Float64Array) {
+				this.type = TYPE.float64;
 			}
 			this.dataLength = dataLength;
 			this.maxChunkSize = maxLength;
+
+			let firstArray = memory.allocUI32(maxLength * dataLength * this.byteMultipler);
+			this.pointerVector.push(firstArray.pointer);
 		}
 	}
 
@@ -192,7 +202,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 			return cachedDataBlock;
 		}
 		if(pointerIndex >= this.pointerVector.length) {
-			let newArray = this.memory.allocUI32(this.maxChunkSize * this.dataLength);
+			let newArray = this.memory.allocUI32(this.maxChunkSize * this.dataLength * this.byteMultipler);
 			this.pointerVector.push(newArray.pointer);
 		}
 
@@ -208,6 +218,9 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 				break;
 			case TYPE.float32:
 				data = new Float32Array(array.data.buffer, array.bufferByteOffset, this.dataLength * this.maxChunkSize) as T;
+				break;
+			case TYPE.float64:
+				data = new Float64Array(array.data.buffer, array.bufferByteOffset, this.dataLength * this.maxChunkSize) as T;
 				break;
 			default:
 				throw new Error(`Unknown data block type ${this.type}`);
@@ -241,7 +254,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	}
 }
 
-interface SharedPoolConfig<T extends Uint32Array | Int32Array | Float32Array> {
+interface SharedPoolConfig<T extends Uint32Array | Int32Array | Float32Array | Float64Array> {
 	maxChunkSize?: number
 	type?: TypedArrayConstructor<T>
 	dataLength?: number
