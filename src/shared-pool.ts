@@ -173,18 +173,19 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 
 	clear() {
 		this.firstBlock.data[LENGTH_INDEX] = 0;
+		this.recycleVector.clear();
 	}
 
 	*[Symbol.iterator]() {
-		let recycledValues = [...this.recycleVector].reduce((array, value) => {
-			array.push(...value);
-			return array;
-		}, [] as Array<number>);
+		const recycledValues: { [key: number]: true } = {};
+		for(let value of this.recycleVector) {
+			recycledValues[value[0]] = true;
+		}
 
 		let dataBlock = this.getFullDataBlock(0);
 		let dataBlockIndex = 0;
 		for(let i = 0; i < Atomics.load(this.firstBlock.data, LENGTH_INDEX); i++) {
-			if(!recycledValues.includes(i)) {
+			if(!recycledValues[i]) {
 				let newDataBlockIndex = Math.floor(i / this.maxChunkSize);
 				if(newDataBlockIndex !== dataBlockIndex) {
 					dataBlock = this.getFullDataBlock(i);

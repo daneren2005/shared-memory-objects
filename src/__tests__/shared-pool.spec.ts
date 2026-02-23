@@ -230,6 +230,35 @@ describe('SharedPool', () => {
 		vector.free();
 		expect(memory.currentUsed).toEqual(startMemory);
 	});
+
+	it('clear', () => {
+		let vector = new SharedPool(memory, {
+			type: Uint32Array
+		});
+
+		vector.push(10);
+		vector.push(52);
+		vector.push(4);
+		vector.push(18);
+		vector.push(25);
+		vector.deleteIndex(1);
+		vector.deleteIndex(3);
+		expect(vector.length).toEqual(3);
+		expect(flat(vector)).toEqual([10, 4, 25]);
+
+		// Clear should make it empty
+		vector.clear();
+		expect(vector.length).toEqual(0);
+		expect(flat(vector)).toEqual([]);
+
+		// Should be able to reuse cleared vector like normal
+		vector.push(97);
+		vector.push(82);
+		vector.push(41);
+		vector.deleteIndex(1);
+		expect(vector.length).toEqual(2);
+		expect(flat(vector)).toEqual([97, 41]);
+	});
 });
 
 function flat(list: SharedPool<any>) {
