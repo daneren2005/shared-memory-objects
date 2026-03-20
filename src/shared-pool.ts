@@ -103,7 +103,8 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 				firstBlock: {
 					bufferPosition: this.firstBlock.bufferPosition,
 					bufferByteOffset: this.firstBlock.bufferByteOffset + RECYCLE_INDEX * Uint32Array.BYTES_PER_ELEMENT
-				}
+				},
+				bufferLength: config?.recycleBufferLength
 			});
 
 			const type = config?.type ?? Uint32Array;
@@ -259,6 +260,7 @@ interface SharedPoolConfig<T extends Uint32Array | Int32Array | Float32Array | F
 	maxChunkSize?: number
 	type?: TypedArrayConstructor<T>
 	dataLength?: number
+	recycleBufferLength?: number
 }
 interface SharedPoolMemory {
 	firstBlock: SharedAllocatedMemory
