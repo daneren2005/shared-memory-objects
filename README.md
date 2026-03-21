@@ -59,12 +59,13 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 - SharedList - linked list
 - SharedVector - growable array
 - SharedMap - growable hash map
+- LocalPool - stable indexed data with a recycled pool that can only be pushed/deleted from main thread but can pass TypedArrays to other threads to operate on
 - SharedPool - stable indexed data with a recycled pool and maximum internal array sizes
 - SharedString
 
 ## Thread Safety
 - Memory allocations is thread safe as long as it does not need to create a new buffer.  Right now that can only be done from the main thread.
-- SharedList, SharedVector, and SharedMap are all not thread safe.
+- SharedList, SharedVector, SharedPool, and SharedMap are all not thread safe.
 - SharedString is thread safe with a lock on read/write with a cached version of the string so it doesn't need to lock after the first read unless the string has changed.
 
 ## TODO
@@ -75,79 +76,92 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 ## Performance
 The tl;dr is that none of these data structures are close to what you can get by just using native data structures, but I wasn't expecting them to be with their overhead.
 They are all significantly slower at iterating and accessing an indexed location.  The SharedList is slowest at everything.
-The SharedPool is the closest to native performance when doing a bunch of random deletes and inserts, which is what I use it for as the memory storage for components in my own ECS framework.
+The SharedPool/LocalPool is the closest to native performance when doing a bunch of random deletes and inserts, which is what I use it for as the memory storage for components in my own ECS framework.
 Since indexed access is about 1/4 the speed of just using a native JS array, there needs to be a lot of work offloaded into a separate thread to make it worth it.
 
 Shared Data Structures: 10000 iterations
 ```
 name                   hz     min     max    mean     p75     p99    p995    p999     rme  samples
-shared list      1,178.27  0.7080  1.8484  0.8487  0.9095  1.4762  1.5502  1.8484  ±1.38%      590
-shared vector    2,071.17  0.4084  1.1862  0.4828  0.5102  0.8796  0.9150  1.0795  ±1.31%     1036
-shared pool      1,944.70  0.4563  1.1443  0.5142  0.5139  0.8429  1.0326  1.1443  ±1.09%      973
-native array   392,746.59  0.0021  0.1976  0.0025  0.0023  0.0059  0.0068  0.0148  ±0.25%   196374
+shared list      1,040.61  0.7898  2.1673  0.9610  1.0080  1.6299  1.7740  2.1673  ±1.49%      521
+shared vector    2,447.08  0.3489  0.8944  0.4086  0.4369  0.7289  0.7887  0.8457  ±1.12%     1224
+local pool       2,661.05  0.3266  0.9810  0.3758  0.3751  0.6516  0.7423  0.9332  ±1.05%     1331
+shared pool      2,052.60  0.4255  1.1583  0.4872  0.4878  0.8323  0.8735  1.0186  ±1.10%     1027
+native array   379,950.63  0.0021  0.1505  0.0026  0.0023  0.0062  0.0070  0.0218  ±0.28%   189976
 
 native array
-189.63x faster than shared vector
-201.96x faster than shared pool
-333.33x faster than shared list
+142.78x faster than local pool
+155.27x faster than shared vector
+185.11x faster than shared pool
+365.12x faster than shared list
 ```
 
 Shared Data Structures: 1000 indexed locations
 ```
 name                   hz     min     max    mean     p75     p99    p995    p999     rme  samples
-shared vector   27,325.20  0.0313  0.3615  0.0366  0.0333  0.0689  0.0859  0.2216  ±0.60%    13663
-shared pool     31,568.26  0.0272  0.2785  0.0317  0.0295  0.0583  0.0692  0.1803  ±0.50%    15785
-native array   114,517.08  0.0074  0.2652  0.0087  0.0079  0.0171  0.0254  0.1205  ±0.56%    57259
+shared vector   28,713.93  0.0276  1.1649  0.0348  0.0335  0.0767  0.1276  0.2245  ±0.86%    14357
+local pool      88,708.78  0.0099  0.2418  0.0113  0.0105  0.0192  0.0261  0.1700  ±0.62%    44369
+shared pool     33,795.16  0.0270  0.1868  0.0296  0.0287  0.0536  0.0631  0.1376  ±0.36%    16898
+native array   126,855.06  0.0072  0.2046  0.0079  0.0076  0.0129  0.0146  0.0993  ±0.42%    63428
 
 native array
-3.63x faster than shared pool
-4.19x faster than shared vector
+1.43x faster than local pool
+3.75x faster than shared pool
+4.42x faster than shared vector
 ```
 
 Shared Data Structures: 1000 inserts
 ```
 name                                                  hz     min      max    mean     p75      p99     p995     p999     rme  samples
-shared list                                     2,154.19  0.4107   1.1497  0.4642  0.4531   0.8892   0.9123   1.0928  ±1.14%     1078
-shared map                                        105.46  8.3417  15.2814  9.4824  9.5396  15.2814  15.2814  15.2814  ±4.05%       53
-shared vector                                  11,058.22  0.0799   0.3675  0.0904  0.0863   0.2084   0.2340   0.2833  ±0.66%     5530
-shared vector with correct amount initialized  16,369.28  0.0548   0.2825  0.0611  0.0575   0.1462   0.1620   0.2008  ±0.56%     8185
-shared pool                                    10,653.47  0.0835   0.3480  0.0939  0.0900   0.2041   0.2222   0.2877  ±0.61%     5327
-native array                                   96,437.13  0.0079   0.2799  0.0104  0.0097   0.0234   0.0681   0.1194  ±0.63%    48219
+shared list                                     1,989.04  0.4176   1.2361   0.5028   0.5238   0.9547   1.0934   1.2361  ±1.49%      995
+shared map                                       98.3711  8.8636  13.3231  10.1656  10.7163  13.3231  13.3231  13.3231  ±3.14%       50
+shared vector                                  15,559.65  0.0529   0.4758   0.0643   0.0609   0.1405   0.1849   0.2850  ±0.71%     7780
+shared vector with correct amount initialized  22,386.17  0.0372   0.3258   0.0447   0.0415   0.0968   0.1167   0.2119  ±0.61%    11194
+local pool                                     43,012.42  0.0173   0.3407   0.0232   0.0210   0.0706   0.0933   0.2009  ±0.79%    21507
+shared pool                                     9,873.77  0.0794   0.5068   0.1013   0.1013   0.2696   0.3232   0.4319  ±1.06%     4937
+shared pool with already deleted elements      13,396.59  0.0643   0.3341   0.0746   0.0700   0.1830   0.2322   0.2799  ±0.70%     6699
+native array                                   94,368.06  0.0084   0.4662   0.0106   0.0101   0.0236   0.0498   0.1181  ±0.61%    47186
 
 native array
-5.89x faster than shared vector with correct amount initialized
-8.72x faster than shared vector
-9.37x faster than shared pool
-44.77x faster than shared list
-914.45x faster than shared map
+2.19x faster than local pool
+4.22x faster than shared vector with correct amount initialized
+6.06x faster than shared vector
+7.04x faster than shared pool with already deleted elements
+9.56x faster than shared pool
+47.44x faster than shared list
+959.31x faster than shared map
 ```
 
 Shared Data Structures: 1000 deletes random element
+NOTE: Local pool is faster than native because array slice is slower than push/pop to a native recycle array
 ```
 name                  hz      min      max     mean      p75      p99     p995     p999     rme  samples
-shared list      14.1243  60.2658  82.0964  70.7998  77.6842  82.0964  82.0964  82.0964  ±6.93%       10
-shared vector     393.31   2.3719   3.4563   2.5425   2.5639   3.3824   3.4563   3.4563  ±0.81%      197
-shared pool     8,824.76   0.1005   0.4998   0.1133   0.1085   0.2338   0.2631   0.3420  ±0.72%     4413
-native array   10,750.49   0.0829   0.6180   0.0930   0.0908   0.1494   0.1592   0.2420  ±0.45%     5376
+shared list      13.1818  68.1220  83.8157  75.8622  79.3236  83.8157  83.8157  83.8157  ±4.40%       10
+shared vector     387.53   2.3857   3.0819   2.5804   2.6409   3.0624   3.0819   3.0819  ±0.70%      194
+local pool     71,370.27   0.0105   0.5406   0.0140   0.0122   0.1055   0.1351   0.1960  ±1.07%    35686
+shared pool    13,049.38   0.0689   0.2990   0.0766   0.0746   0.1439   0.1681   0.2269  ±0.51%     6525
+native array   10,559.95   0.0827   0.2363   0.0947   0.0941   0.1532   0.1693   0.2037  ±0.45%     5281
 
-native array
-1.22x faster than shared pool
-27.33x faster than shared vector
-761.13x faster than shared list
+local pool
+5.47x faster than shared pool
+6.76x faster than native array
+184.17x faster than shared vector
+5414.30x faster than shared list
 ```
 
 Shared Data Structures: 1000 insert and deleting random elements
 ```
 name                  hz      min      max     mean      p75      p99     p995     p999     rme  samples
-shared list      23.3898  40.4675  46.8902  42.7537  43.4073  46.8902  46.8902  46.8902  ±3.04%       12
-shared vector     848.84   1.0093   2.1141   1.1781   1.1890   1.9349   1.9559   2.1141  ±1.42%      425
-shared pool     4,862.78   0.1822   0.6673   0.2056   0.1974   0.3683   0.3796   0.4319  ±0.75%     2432
-native array   10,584.21   0.0808   0.3616   0.0945   0.0897   0.2304   0.2540   0.3033  ±0.71%     5293
+shared list      20.5573  43.7463  57.7009  48.6445  50.4710  57.7009  57.7009  57.7009  ±5.73%       11
+shared vector     752.07   1.0805   2.4937   1.3297   1.3769   2.1734   2.3537   2.4937  ±1.81%      377
+local pool     22,453.72   0.0388   0.3417   0.0445   0.0417   0.1214   0.1574   0.2231  ±0.63%    11227
+shared pool     5,684.68   0.1490   1.7416   0.1759   0.1703   0.4351   0.5387   0.9790  ±1.37%     2843
+native array   11,030.10   0.0793   0.2980   0.0907   0.0866   0.1808   0.1976   0.2412  ±0.54%     5516
 
-native array
-2.18x faster than shared pool
-12.47x faster than shared vector
-452.51x faster than shared list
+local pool
+2.04x faster than native array
+3.95x faster than shared pool
+29.86x faster than shared vector
+1092.25x faster than shared list
 ```
 
 ## Credit

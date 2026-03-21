@@ -9,6 +9,7 @@ import SharedString from './shared-string';
 import SharedVector, { type SharedVectorMemory } from './shared-vector';
 import CachedItemList, { type CachedListConfig } from './cached-item-list';
 import SharedPool, { type SharedPoolMemory, type SharedPoolConfig } from './shared-pool';
+import LocalPool, { type LocalPoolConfig } from './local-pool';
 
 export * from './interfaces/typed-array';
 export * from './interfaces/typed-array-constructor';
@@ -41,6 +42,8 @@ export {
 	SharedPool,
 	type SharedPoolMemory,
 	type SharedPoolConfig,
+	LocalPool,
+	type LocalPoolConfig,
 	CachedItemList,
 	type CachedListConfig
 };

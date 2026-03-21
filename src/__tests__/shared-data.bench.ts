@@ -4,6 +4,7 @@ import MemoryHeap from '../memory-heap';
 import SharedMap from '../shared-map';
 import SharedVector from '../shared-vector';
 import SharedPool from '../shared-pool';
+import LocalPool from '../local-pool';
 
 const ITERATE_COUNT = 10_000;
 describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
@@ -36,6 +37,24 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 				sharedVector = new SharedVector(memory);
 				for(let i = 0; i < ITERATE_COUNT; i++) {
 					sharedVector.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
+	let localPool: LocalPool;
+	bench('local pool', () => {
+		// eslint-disable-next-line
+		for(let number of localPool) {}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 100
+				});
+				localPool = new LocalPool(memory, { type: Uint32Array });
+				for(let i = 0; i < ITERATE_COUNT; i++) {
+					localPool.push(Math.random() * 1_000_000);
 				}
 			};
 		}
@@ -92,6 +111,25 @@ describe(`Shared Data Structures: ${INDEX_COUNT} indexed locations`, () => {
 				sharedVector = new SharedVector(memory);
 				for(let i = 0; i < INDEX_COUNT; i++) {
 					sharedVector.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
+	let localPool: LocalPool;
+	bench('local pool', () => {
+		for(let i = 0; i < INDEX_COUNT; i++) {
+			localPool.get(randomIndex(localPool));
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 100
+				});
+				localPool = new LocalPool(memory, { type: Uint32Array });
+				for(let i = 0; i < INDEX_COUNT; i++) {
+					localPool.push(Math.random() * 1_000_000);
 				}
 			};
 		}
@@ -170,12 +208,44 @@ describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
 			list.push(Math.random() * 1_000_000);
 		}
 	});
+	bench('local pool', () => {
+		let memory = new MemoryHeap();
+		let list = new LocalPool(memory, { type: Uint32Array });
+
+		for(let i = 0; i < INSERT_COUNT; i++) {
+			list.push(Math.random() * 1_000_000);
+		}
+	});
 	bench('shared pool', () => {
 		let memory = new MemoryHeap();
 		let list = new SharedPool(memory);
 
 		for(let i = 0; i < INSERT_COUNT; i++) {
 			list.push(Math.random() * 1_000_000);
+		}
+	});
+
+	let sharedPool: SharedPool;
+	bench('shared pool with already deleted elements', () => {
+		for(let i = 0; i < INSERT_COUNT; i++) {
+			sharedPool.push(Math.random() * 1_000_000);
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap();
+				sharedPool = new SharedPool(memory, {
+					// Make sure we are not measuring time to grow recycle buffer at all during the test
+					recycleBufferLength: INSERT_COUNT
+				});
+
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					sharedPool.push(Math.random() * 1_000_000);
+				}
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					sharedPool.deleteIndex(i);
+				}
+			};
 		}
 	});
 	bench('native array', () => {
@@ -282,6 +352,26 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () =>
 		}
 	});
 
+
+	let localPool: LocalPool;
+	bench('local pool', () => {
+		for(let i = 0; i < DELETE_COUNT; i++) {
+			localPool.deleteIndex(randomIndex(localPool));
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 16
+				});
+				localPool = new LocalPool(memory, { type: Uint32Array });
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					localPool.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
 	let sharedPool: SharedPool;
 	bench('shared pool', () => {
 		for(let i = 0; i < DELETE_COUNT; i++) {
@@ -360,6 +450,29 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 				sharedVector = new SharedVector(memory);
 				for(let i = 0; i < INSERT_COUNT; i++) {
 					sharedVector.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
+
+	let localPool: LocalPool;
+	bench('local pool', () => {
+		for(let i = 0; i < RUN_COUNT; i++) {
+			if(Math.random() > 0.6) {
+				localPool.deleteIndex(randomIndex(localPool));
+			} else {
+				localPool.push(Math.random() * 1_000_000);
+			}
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 16
+				});
+				localPool = new LocalPool(memory, { type: Uint32Array });
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					localPool.push(Math.random() * 1_000_000);
 				}
 			};
 		}
