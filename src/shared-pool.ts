@@ -159,7 +159,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 
 		let newIndex;
 		if(this.recycleVector.length) {
-			newIndex = this.recycleVector.pop()[0];
+			newIndex = this.recycleVector.popNumber();
 		} else {
 			newIndex = Atomics.add(this.firstBlock.data, LENGTH_INDEX, 1);
 		}

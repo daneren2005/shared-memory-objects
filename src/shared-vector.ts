@@ -2,7 +2,7 @@ import type { SharedAllocatedMemory } from './allocated-memory';
 import AllocatedMemory from './allocated-memory';
 import type { TypedArrayConstructor } from './interfaces/typed-array-constructor';
 import type MemoryHeap from './memory-heap';
-import { getPointer, loadPointer, storePointer } from './utils/pointer';
+import { getPointer, loadPointer, storePointer, storeRawPointer } from './utils/pointer';
 
 enum TYPE {
 	uint32,
@@ -35,7 +35,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	}
 	get dataLength(): number {
 		// Can technically be initialized by passing memory without actually every being called - need to make sure dataLength is always at least one
-		return Math.max(1, this.uint16Array[1]);
+		return this.uint16Array[1] || 1;
 	}
 	private set dataLength(value: number) {
 		Atomics.store(this.uint16Array, 1, value);
@@ -134,18 +134,20 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	}
 
 	push(values: number | Array<number>): number {
-		if(typeof values === 'number') {
-			values = [values];
-		}
-
 		let dataLength = this.dataLength;
-		if(values.length > dataLength) {
+		const isSingleNumber = typeof values === 'number';
+		if(!isSingleNumber && values.length > dataLength) {
 			throw new Error(`Can't insert ${values.length} array into shared list of ${dataLength} dataLength`);
 		}
 
 		let dataBlock = this.getFullDataBlock();
 		let currentLength = this.length;
-		dataBlock.set(values, dataLength * currentLength);
+		let startIndex = dataLength * currentLength;
+		if(isSingleNumber) {
+			dataBlock[startIndex] = values;
+		} else {
+			dataBlock.set(values, startIndex);
+		}
 
 		let newLength = Atomics.add(this.firstBlock.data, LENGTH_INDEX, 1) + 1;
 		if(newLength >= this.bufferLength) {
@@ -160,6 +162,13 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 
 		let dataBlock = this.getFullDataBlock();
 		return this.getDataBlock(dataBlock, oldLength - 1);
+	}
+
+	// Returns the first number irregardless of dataLength - faster way to pop if you don't care about the rest of the data block
+	popNumber(): number {
+		const oldLength = Atomics.sub(this.firstBlock.data, LENGTH_INDEX, LENGTH_INDEX);
+		const dataBlock = this.getFullDataBlock();
+		return dataBlock[(oldLength - 1) * this.dataLength];
 	}
 
 	deleteIndex(index: number) {
@@ -238,13 +247,13 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		let newData: T;
 		switch(this.type) {
 			case TYPE.int32:
-				newData = new Int32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * this.bufferLength) as T;
+				newData = new Int32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * newBufferLength) as T;
 				break;
 			case TYPE.uint32:
-				newData = new Uint32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * this.bufferLength) as T;
+				newData = new Uint32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * newBufferLength) as T;
 				break;
 			case TYPE.float32:
-				newData = new Float32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * this.bufferLength) as T;
+				newData = new Float32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * newBufferLength) as T;
 				break;
 			default:
 				throw new Error(`Unknown data block type ${this.type}`);
@@ -253,9 +262,13 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		// Copy old buffer into new buffer
 		newData.set(oldDataBlock);
 
-		storePointer(this.firstBlock.data, VECTOR_INDEX, newDataBlock.bufferPosition, newDataBlock.bufferByteOffset);
+		const newPointer = newDataBlock.pointer;
+		storeRawPointer(this.firstBlock.data, VECTOR_INDEX, newPointer);
 		this.bufferLength = newBufferLength;
 		oldDataMemory.free();
+
+		this.cachedPointer = newPointer;
+		this.cachedFullDataBlock = newData;
 	}
 
 	free() {
