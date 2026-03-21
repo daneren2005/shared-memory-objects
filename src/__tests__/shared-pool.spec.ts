@@ -13,6 +13,7 @@ describe('SharedPool', () => {
 		let vector = new SharedPool(memory, {
 			type: Uint32Array
 		});
+		expect(vector.recycleBufferLength).toEqual(4);
 
 		expect(vector.push(10)).toEqual(0);
 		expect(vector.push(52)).toEqual(1);
@@ -29,6 +30,15 @@ describe('SharedPool', () => {
 		expect(vector.get(2)).toEqual(4);
 		expect(vector.get(4)).toEqual(25);
 		expect(vector.bufferLength).toEqual(100);
+	});
+
+	it('uses configured recycleBufferLength', () => {
+		let vector = new SharedPool(memory, {
+			type: Uint32Array,
+			recycleBufferLength: 12
+		});
+
+		expect(vector.recycleBufferLength).toEqual(12);
 	});
 
 	it('continually grows memory as needed', () => {
@@ -53,6 +63,7 @@ describe('SharedPool', () => {
 
 	it('deleteIndex', () => {
 		let vector = new SharedPool(memory);
+		expect(vector.recycleBufferLength).toEqual(4);
 
 		vector.push(10);
 		vector.push(52);

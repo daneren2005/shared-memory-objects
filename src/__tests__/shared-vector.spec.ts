@@ -144,6 +144,25 @@ describe('SharedVector', () => {
 		expect(vector.get(2)).toEqual(4.5);
 	});
 
+	it('initializes with firstBlock', () => {
+		const hostBlock = memory.allocUI32(SharedVector.ALLOCATE_COUNT * 2);
+		const vector = new SharedVector(memory, {
+			type: Uint32Array,
+			dataLength: 2,
+			bufferLength: 12,
+			firstBlock: {
+				bufferPosition: hostBlock.bufferPosition,
+				bufferByteOffset: hostBlock.bufferByteOffset + SharedVector.ALLOCATE_COUNT * Uint32Array.BYTES_PER_ELEMENT
+			}
+		});
+
+		expect(vector.dataLength).toEqual(2);
+		expect(vector.bufferLength).toEqual(12);
+		expect(vector.push(99)).toEqual(0);
+		expect(vector.push(42)).toEqual(1);
+		expect(flat(vector)).toEqual([99, 0, 42, 0]);
+	});
+
 	it('can work from memory', () => {
 		let mainVector = new SharedVector(memory, {
 			type: Uint32Array,

@@ -64,9 +64,10 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 
 			// Pre-allocating memory and setting up in specific memory location
 			if('type' in config || 'dataLength' in config) {
-				let dataBlock = memory.allocUI32(DEFAULT_SIZE * (config.dataLength ?? 1));
+				const bufferLength = config.bufferLength ?? DEFAULT_SIZE;
+				let dataBlock = memory.allocUI32(bufferLength * (config.dataLength ?? 1));
 				storePointer(this.firstBlock.data, VECTOR_INDEX, dataBlock.bufferPosition, dataBlock.bufferByteOffset);
-				this.bufferLength = DEFAULT_SIZE;
+				this.bufferLength = bufferLength;
 				this.dataLength = (config.dataLength ?? 1);
 			}
 			if('type' in config) {

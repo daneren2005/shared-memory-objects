@@ -58,6 +58,9 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	get bufferLength(): number {
 		return this.maxChunkSize * this.pointerVector.length;
 	}
+	get recycleBufferLength(): number {
+		return this.recycleVector.bufferLength;
+	}
 	get byteMultipler(): number {
 		if(this.type === TYPE.float64) {
 			return 2;
