@@ -195,8 +195,9 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	*[Symbol.iterator]() {
 		let dataBlock = this.getFullDataBlock();
 		let dataLength = this.dataLength;
+		let totalDataEntries = this.length * dataLength;
 
-		for(let i = 0; i < this.length; i += dataLength) {
+		for(let i = 0; i < totalDataEntries; i += dataLength) {
 			yield dataBlock.subarray(i, i + dataLength) as T;
 		}
 	}
