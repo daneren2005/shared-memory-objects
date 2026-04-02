@@ -6,7 +6,7 @@ import SharedList, { type SharedListMemory } from './shared-list';
 import SharedMap, { type SharedMapMemory } from './shared-map';
 import SharedPointerList from './shared-pointer-list';
 import SharedString from './shared-string';
-import SharedVector, { type SharedVectorMemory } from './shared-vector';
+import SharedVector, { type SharedVectorConfig, type SharedVectorMemory } from './shared-vector';
 import CachedItemList, { type CachedListConfig } from './cached-item-list';
 import SharedPool, { type SharedPoolMemory, type SharedPoolConfig } from './shared-pool';
 import LocalPool, { type LocalPoolConfig } from './local-pool';
@@ -38,6 +38,7 @@ export {
 	SharedPointerList,
 	SharedString,
 	SharedVector,
+	type SharedVectorConfig,
 	type SharedVectorMemory,
 	SharedPool,
 	type SharedPoolMemory,

@@ -194,10 +194,17 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 
 	*[Symbol.iterator]() {
 		let dataBlock = this.getFullDataBlock();
+		let dataLength = this.dataLength;
 
-		for(let i = 0; i < this.length; i++) {
-			yield this.getDataBlock(dataBlock, i);
+		for(let i = 0; i < this.length; i += dataLength) {
+			yield dataBlock.subarray(i, i + dataLength) as T;
 		}
+	}
+
+	// Significantly faster but won't be thread safe if anything is removing/adding to it during iteration
+	getCurrentArray(): T {
+		let dataBlock = this.getFullDataBlock();
+		return dataBlock.subarray(0, this.length * this.dataLength) as T;
 	}
 
 	private getFullDataBlock(): T {

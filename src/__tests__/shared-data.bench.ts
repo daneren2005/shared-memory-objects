@@ -41,6 +41,24 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 			};
 		}
 	});
+	let sharedVector2: SharedVector;
+	bench('shared vector:getCurrentArray()', () => {
+		let array = sharedVector2.getCurrentArray();
+		// eslint-disable-next-line
+		for(let number of array) {}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 100
+				});
+				sharedVector2 = new SharedVector(memory);
+				for(let i = 0; i < ITERATE_COUNT; i++) {
+					sharedVector2.push(Math.random() * 1_000_000);
+				}
+			};
+		}
+	});
 
 	let localPool: LocalPool;
 	bench('local pool', () => {
