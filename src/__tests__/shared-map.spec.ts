@@ -91,8 +91,54 @@ describe('SharedMap', () => {
 			}
 		});
 
+		it('growing the hash table does not leak memory', () => {
+			let startMemory = memory.currentUsed;
+			let map = new SharedMap<string>(memory);
+
+			// Enough distinct keys to force at least one hash table growth
+			for(let i = 0; i < 30; i++) {
+				map.set(`key-${i}`, i);
+			}
+			expect(map.maxHash).toBeGreaterThan(10);
+
+			// All values should still be readable after the growth/rehash
+			for(let i = 0; i < 30; i++) {
+				expect(map.get(`key-${i}`)).toEqual(i);
+			}
+
+			map.free();
+			expect(memory.currentUsed).toEqual(startMemory);
+		});
+
 		function insertRandom(map: SharedMap<string>) {
 			map.set(`${map.length + 1}`, Math.random() * 1_000_000);
 		}
+	});
+
+	describe('SharedMap<number>', () => {
+		it('insert, read, and remove numeric keys', () => {
+			let map = new SharedMap<number>(memory);
+
+			map.set(1, 100);
+			map.set(2, 200);
+			map.set(3, 300);
+			expect(map.length).toEqual(3);
+
+			expect(map.get(1)).toEqual(100);
+			expect(map.get(2)).toEqual(200);
+			expect(map.has(3)).toEqual(true);
+			expect(map.has(4)).toEqual(false);
+			expect(map.get(4)).toBeUndefined();
+
+			// Overwriting an existing key should not change length
+			map.set(2, 222);
+			expect(map.length).toEqual(3);
+			expect(map.get(2)).toEqual(222);
+
+			expect(map.delete(2)).toEqual(true);
+			expect(map.length).toEqual(2);
+			expect(map.get(2)).toBeUndefined();
+			expect(map.delete(2)).toEqual(false);
+		});
 	});
 });

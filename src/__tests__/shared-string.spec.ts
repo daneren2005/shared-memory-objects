@@ -63,6 +63,38 @@ describe('SharedString', () => {
 		expect(string.value).toEqual('');
 	});
 
+	it('handles large ascii strings without blowing the stack', () => {
+		let memory = new MemoryHeap({ bufferSize: 1024 * 1024 });
+		let big = 'a'.repeat(200_000);
+		let string = new SharedString(memory, big);
+
+		expect(string.value.length).toEqual(200_000);
+		expect(string.value).toEqual(big);
+	});
+
+	it('handles large utf16 strings without blowing the stack', () => {
+		let memory = new MemoryHeap({ bufferSize: 1024 * 1024 });
+		let big = 'ǭ'.repeat(100_000);
+		let string = new SharedString(memory, big);
+
+		expect(string.value.length).toEqual(100_000);
+		expect(string.value).toEqual(big);
+	});
+
+	it('can be updated back and forth between ascii and utf16 without leaking', () => {
+		let memory = new MemoryHeap();
+		let startMemory = memory.currentUsed;
+		let string = new SharedString(memory, 'ascii value here');
+
+		string.value = 'utf16 ǭ value here';
+		expect(string.value).toEqual('utf16 ǭ value here');
+		string.value = 'back to ascii';
+		expect(string.value).toEqual('back to ascii');
+
+		string.free();
+		expect(memory.currentUsed).toEqual(startMemory);
+	});
+
 	it('free', () => {
 		let memory = new MemoryHeap();
 		let startMemory = memory.currentUsed;

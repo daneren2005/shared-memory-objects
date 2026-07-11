@@ -165,10 +165,16 @@ export default class SharedMap<K extends string | number> {
 			for(let { data } of list) {
 				this.setHashKey(newHashMemory, newMaxHash, data[0], data[1]);
 			}
+
+			// The entries have been copied into freshly allocated lists in the new hash table so the old list can be freed
+			list.free();
 		}
 
 		storePointer(this.pointerMemory.data, 0, newHashMemory.bufferPosition, newHashMemory.bufferByteOffset);
 		Atomics.store(this.pointerMemory.data, 3, newMaxHash);
+
+		// pointerMemory now references newHashMemory so the old hash table memory can be freed
+		oldHashMemory.free();
 	}
 
 	private hash(key: number, maxHash: number) {

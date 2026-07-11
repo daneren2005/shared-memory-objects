@@ -66,12 +66,14 @@ export default class SharedString {
 			};
 		}
 
-		let charCodes = [];
+		// NOTE: Scan with a loop instead of Math.max(...charCodes) which blows the stack for large strings
+		let maxCharCode = 0;
 		for(let i = 0; i < value.length; i++) {
-			charCodes.push(value.charCodeAt(i));
+			let charCode = value.charCodeAt(i);
+			if(charCode > maxCharCode) {
+				maxCharCode = charCode;
+			}
 		}
-
-		let maxCharCode = Math.max(...charCodes);
 		let charType = maxCharCode > 255 ? CHAR_TYPE.UTF16 : CHAR_TYPE.ASCII;
 
 		let typedArray = TYPED_ARRAY_MAP[charType];
@@ -103,7 +105,7 @@ export default class SharedString {
 		let bufferLength = Atomics.load(this.allocatedMemory.data, LENGTH_INDEX);
 
 		let data = new typedArray(this.memory.buffers[bufferPosition].buf, bufferByteOffset, bufferLength);
-		let string = String.fromCharCode.apply(null, data);
+		let string = fromCharCodes(data);
 		// NOTE: Do not unlock until after transforming the data since the second this is done it can free that memory block
 		unlock(this.lock);
 
@@ -136,6 +138,22 @@ export default class SharedString {
 		}
 		this.allocatedMemory.free();
 	}
+}
+
+// String.fromCharCode.apply throws a RangeError (Maximum call stack size exceeded) when handed too many
+// arguments at once, so decode large buffers in chunks to support arbitrarily long strings
+function fromCharCodes(data: Uint8Array | Uint16Array): string {
+	const CHUNK_SIZE = 8192;
+	if(data.length <= CHUNK_SIZE) {
+		return String.fromCharCode.apply(null, data as unknown as Array<number>);
+	}
+
+	let string = '';
+	for(let i = 0; i < data.length; i += CHUNK_SIZE) {
+		string += String.fromCharCode.apply(null, data.subarray(i, i + CHUNK_SIZE) as unknown as Array<number>);
+	}
+
+	return string;
 }
 
 interface SharedStringConfig extends SharedStringMemory {

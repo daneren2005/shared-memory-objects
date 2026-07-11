@@ -198,6 +198,69 @@ describe('SharedVector', () => {
 		expect(cloneVector.length).toEqual(23);
 	});
 
+	it('int32 stores negative numbers', () => {
+		let vector = new SharedVector(memory, {
+			type: Int32Array
+		});
+
+		vector.push(-10);
+		vector.push(52);
+		vector.push(-4);
+
+		expect(vector.length).toEqual(3);
+		expect(flat(vector)).toEqual([-10, 52, -4]);
+		expect(vector.get(0)).toEqual(-10);
+		expect(vector.get(2)).toEqual(-4);
+	});
+
+	it('clear resets length and allows reuse', () => {
+		let vector = new SharedVector(memory);
+
+		vector.push(10);
+		vector.push(52);
+		vector.push(4);
+		expect(vector.length).toEqual(3);
+
+		vector.clear();
+		expect(vector.length).toEqual(0);
+		expect(flat(vector)).toEqual([]);
+
+		vector.push(99);
+		expect(vector.length).toEqual(1);
+		expect(flat(vector)).toEqual([99]);
+	});
+
+	it('getCurrentArray returns a view of the current contents', () => {
+		let vector = new SharedVector(memory, {
+			type: Uint32Array
+		});
+
+		vector.push(10);
+		vector.push(52);
+		vector.push(4);
+
+		expect([...vector.getCurrentArray()]).toEqual([10, 52, 4]);
+	});
+
+	it('throws when accessing out of bounds', () => {
+		let vector = new SharedVector(memory);
+		vector.push(10);
+
+		expect(() => vector.at(1)).toThrowError('1 is out of bounds 1');
+		expect(() => vector.at(-1)).toThrowError('-1 is out of bounds 1');
+		expect(() => vector.get(1)).toThrowError('1 is out of bounds 1');
+		expect(() => vector.get(0, 1)).toThrowError('1 is out of dataLength bounds 1');
+	});
+
+	it('throws when pushing an array larger than dataLength', () => {
+		let vector = new SharedVector(memory, {
+			type: Uint32Array,
+			dataLength: 2
+		});
+
+		expect(() => vector.push([1, 2, 3])).toThrowError('Can\'t insert 3 array into shared list of 2 dataLength');
+	});
+
 	it('free', () => {
 		let startMemory = memory.currentUsed;
 		let vector = new SharedVector(memory, {

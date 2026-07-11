@@ -158,7 +158,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	}
 
 	pop(): T {
-		let oldLength = Atomics.sub(this.firstBlock.data, LENGTH_INDEX, LENGTH_INDEX);
+		let oldLength = Atomics.sub(this.firstBlock.data, LENGTH_INDEX, 1);
 
 		let dataBlock = this.getFullDataBlock();
 		return this.getDataBlock(dataBlock, oldLength - 1);
@@ -166,7 +166,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 
 	// Returns the first number irregardless of dataLength - faster way to pop if you don't care about the rest of the data block
 	popNumber(): number {
-		const oldLength = Atomics.sub(this.firstBlock.data, LENGTH_INDEX, LENGTH_INDEX);
+		const oldLength = Atomics.sub(this.firstBlock.data, LENGTH_INDEX, 1);
 		const dataBlock = this.getFullDataBlock();
 		return dataBlock[(oldLength - 1) * this.dataLength];
 	}
@@ -185,7 +185,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 			}
 		}
 
-		Atomics.sub(this.firstBlock.data, LENGTH_INDEX, LENGTH_INDEX);
+		Atomics.sub(this.firstBlock.data, LENGTH_INDEX, 1);
 	}
 
 	clear() {
