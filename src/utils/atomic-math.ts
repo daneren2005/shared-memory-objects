@@ -7,6 +7,8 @@ export function addAtomicInt(array: Uint32Array | Int32Array, index: number, amo
 		oldValue = Atomics.load(array, index);
 		newValue = Math.min(oldValue + amount, max);
 	} while(Atomics.compareExchange(array, index, oldValue, newValue) !== oldValue);
+
+	return newValue;
 }
 
 export function subtractAtomicInt(array: Uint32Array | Int32Array, index: number, amount: number, min: number) {
@@ -16,6 +18,8 @@ export function subtractAtomicInt(array: Uint32Array | Int32Array, index: number
 		oldValue = Atomics.load(array, index);
 		newValue = Math.max(oldValue - amount, min);
 	} while(Atomics.compareExchange(array, index, oldValue, newValue) !== oldValue);
+
+	return newValue;
 }
 
 export function addAtomicFloat32(array: Float32Array, index: number, amount: number, max: number) {
@@ -25,6 +29,8 @@ export function addAtomicFloat32(array: Float32Array, index: number, amount: num
 		oldValue = loadFloat32(array, index);
 		newValue = Math.min(oldValue + amount, max);
 	} while(compareExchangeFloat32(array, index, oldValue, newValue) !== oldValue);
+
+	return newValue;
 }
 
 export function subtractAtomicFloat(array: Float32Array, index: number, amount: number, min: number) {
@@ -34,4 +40,6 @@ export function subtractAtomicFloat(array: Float32Array, index: number, amount: 
 		oldValue = loadFloat32(array, index);
 		newValue = Math.max(oldValue - amount, min);
 	} while(compareExchangeFloat32(array, index, oldValue, newValue) !== oldValue);
+
+	return newValue;
 }
