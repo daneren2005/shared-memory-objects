@@ -1,4 +1,5 @@
 import MemoryHeap from '../../src/memory-heap';
+import prettyMemory from '../pretty-memory';
 import TestWorker from './worker?worker';
 
 const memory = new MemoryHeap({
@@ -61,7 +62,7 @@ function checkIfDone() {
 	if(workersDone >= workers.length) {
 		console.timeEnd('running allocations');
 		console.log('all workers done allocating - checking results');
-		console.log(`memory: ${memory.prettyMemory()} - ${memory.buffers.length} buffers`);
+		console.log(`memory: ${prettyMemory(memory)} - ${memory.buffers.length} buffers`);
 
 		workers.forEach(worker => {
 			worker.postMessage({

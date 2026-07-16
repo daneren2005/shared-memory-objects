@@ -1,5 +1,4 @@
 import AllocatedMemory, { type SharedAllocatedMemory } from './allocated-memory';
-import prettyBytes from 'pretty-bytes';
 import { MAX_BYTE_OFFSET_LENGTH, MAX_POSITION_LENGTH } from './utils/pointer';
 import MemoryBuffer from './memory-buffer';
 
@@ -169,23 +168,11 @@ export default class MemoryHeap {
 		return this.buffers[0].buf.byteLength * this.buffers.length;
 	}
 
-	prettyMemory() {
-		return `${myPrettyBytes(this.currentUsed)} / ${myPrettyBytes(this.totalAllocated)}`;
-	}
-
 	getSharedMemory(): MemoryHeapMemory {
 		return {
 			buffers: this.buffers.map(buffer => buffer.buf as SharedArrayBuffer)
 		};
 	}
-}
-
-function myPrettyBytes(bytes: number) {
-	return prettyBytes(bytes, {
-		binary: true,
-		minimumFractionDigits: 1,
-		maximumFractionDigits: 1
-	});
 }
 
 type OnGrowBuffer = (newBuffer: GrowBufferData) => void;

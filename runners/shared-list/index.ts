@@ -1,5 +1,6 @@
 import MemoryHeap from '../../src/memory-heap';
 import SharedList from '../../src/shared-list';
+import prettyMemory from '../pretty-memory';
 import TestWorker from './worker?worker';
 
 const heap = new MemoryHeap({
@@ -49,7 +50,7 @@ function checkIfDone() {
 	if(workersDone >= workers.length) {
 		console.timeEnd('running list operations');
 		console.log(`all workers done running - checking results - ${list.length} items`);
-		console.log(`memory: ${heap.prettyMemory()}`);
+		console.log(`memory: ${prettyMemory(heap)}`);
 
 		workers.forEach(worker => {
 			worker.postMessage({
