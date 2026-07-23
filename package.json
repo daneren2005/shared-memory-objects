@@ -39,7 +39,7 @@
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "preview": "vite preview",
-    "publish": "npm publish --access public",
+    "publish:manual": "npm publish --access public",
     "release": "semantic-release",
     "start": "npm run dev",
     "test:bench": "vitest bench",
