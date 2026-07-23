@@ -40,6 +40,7 @@
     "lint:fix": "eslint --fix",
     "preview": "vite preview",
     "publish": "npm publish --access public",
+    "release": "semantic-release",
     "start": "npm run dev",
     "test:bench": "vitest bench",
     "test:ui": "vitest --ui --api 9527",
@@ -49,6 +50,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@semantic-release/git": "^10.0.1",
     "@tsconfig/node24": "^24.0.1",
     "@types/node": "^24.9.1",
     "@vitest/coverage-v8": "^4.0.1",
@@ -58,6 +60,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.2.6",
     "pretty-bytes": "^7.1.0",
+    "semantic-release": "^25.0.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.2",
     "unplugin-dts": "^1.0.0-beta.6",
