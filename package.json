@@ -16,23 +16,18 @@
     "url": "https://github.com/daneren2005/shared-memory-objects/issues"
   },
   "type": "module",
+  "sideEffects": false,
   "files": [
     "dist/"
   ],
-  "main": "./dist/shared-memory-objects.js",
   "exports": {
-    ".": {
+    "./*": {
       "import": {
-        "types": "./dist/src/main.d.ts",
-        "default": "./dist/shared-memory-objects.js"
-      },
-      "require": {
-        "types": "./dist/src/main.d.ts",
-        "default": "./dist/shared-memory-objects.js"
+        "types": "./dist/src/*.d.ts",
+        "default": "./dist/*.js"
       }
     }
   },
-  "types": "./dist/src/main.d.ts",
   "scripts": {
     "build": "vite build",
     "dev": "vite",

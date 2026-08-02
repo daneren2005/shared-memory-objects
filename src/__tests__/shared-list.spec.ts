@@ -1,7 +1,7 @@
 import SharedList from '../shared-list';
 import MemoryHeap from '../memory-heap';
 import SharedString from '../shared-string';
-import { getPointer } from '../main';
+import { getPointer } from '../utils/pointer';
 
 describe('SharedList', () => {
 	let memory: MemoryHeap;

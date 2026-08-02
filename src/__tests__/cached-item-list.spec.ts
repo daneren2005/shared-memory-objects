@@ -1,5 +1,5 @@
 import CachedItemList from '../cached-item-list';
-import { getPointer } from '../main';
+import { getPointer } from '../utils/pointer';
 import MemoryHeap from '../memory-heap';
 import SharedString from '../shared-string';
 
