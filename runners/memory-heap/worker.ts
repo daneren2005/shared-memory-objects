@@ -1,5 +1,6 @@
 import type AllocatedMemory from '../../src/allocated-memory';
 import MemoryHeap from '../../src/memory-heap';
+import { warn } from '../logger';
 
 let memory: MemoryHeap;
 let workerNumber: number;
@@ -39,7 +40,7 @@ self.onmessage = (e) => {
 			let allocatedBlock = allocatedBlocks[i];
 			for(let j = 0; j < allocatedBlock.data.length; j++) {
 				if(allocatedBlock.data[j] !== workerNumber) {
-					console.warn(`worker ${workerNumber} found a bad allocation - expected ${workerNumber} but found ${allocatedBlock.data[j]}`);
+					warn(`worker ${workerNumber} found a bad allocation - expected ${workerNumber} but found ${allocatedBlock.data[j]}`);
 					return;
 				}
 			}

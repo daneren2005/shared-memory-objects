@@ -1,6 +1,9 @@
 import MemoryHeap from '../../src/memory-heap';
+import { attachWorkerLogging, captureGlobalErrors, log } from '../logger';
 import prettyMemory from '../pretty-memory';
 import TestWorker from './worker?worker';
+
+captureGlobalErrors();
 
 const memory = new MemoryHeap({
 	bufferSize: 1024 * 10
@@ -26,6 +29,7 @@ workerAllocations.forEach((allocations, index) => {
 		workerNumber: index + 1
 	});
 
+	attachWorkerLogging(worker);
 	worker.onmessage = (e) => {
 		if(e.data.done) {
 			workersDone++;
@@ -47,9 +51,11 @@ workerAllocations.forEach((allocations, index) => {
 	workers.push(worker);
 });
 
+let startTime = 0;
 // Give workers a minute to finish initializing
 window.setTimeout(() => {
-	console.time('running allocations');
+	log('running allocations');
+	startTime = performance.now();
 	workerAllocations.forEach((allocations, index) => {
 		workers[index].postMessage({
 			iterations: 5_000,
@@ -60,9 +66,9 @@ window.setTimeout(() => {
 
 function checkIfDone() {
 	if(workersDone >= workers.length) {
-		console.timeEnd('running allocations');
-		console.log('all workers done allocating - checking results');
-		console.log(`memory: ${prettyMemory(memory)} - ${memory.buffers.length} buffers`);
+		log(`finished allocations in ${Math.round(performance.now() - startTime)}ms`);
+		log('all workers done allocating - checking results');
+		log(`memory: ${prettyMemory(memory)} - ${memory.buffers.length} buffers`);
 
 		workers.forEach(worker => {
 			worker.postMessage({

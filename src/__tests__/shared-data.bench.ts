@@ -252,10 +252,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap();
-				sharedPool = new SharedPool(memory, {
-					// Make sure we are not measuring time to grow recycle buffer at all during the test
-					recycleBufferLength: INSERT_COUNT
-				});
+				sharedPool = new SharedPool(memory);
 
 				for(let i = 0; i < INSERT_COUNT; i++) {
 					sharedPool.push(Math.random() * 1_000_000);
@@ -473,13 +470,18 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 		}
 	});
 
+	// Stable-index pools can't delete the same index twice, so track the live indexes and delete a real one
 	let localPool: LocalPool;
+	let localPoolLive: Array<number>;
 	bench('local pool', () => {
 		for(let i = 0; i < RUN_COUNT; i++) {
-			if(Math.random() > 0.6) {
-				localPool.deleteIndex(randomIndex(localPool));
+			if(Math.random() > 0.6 && localPoolLive.length) {
+				let at = Math.floor(Math.random() * localPoolLive.length);
+				localPool.deleteIndex(localPoolLive[at]);
+				localPoolLive[at] = localPoolLive[localPoolLive.length - 1];
+				localPoolLive.pop();
 			} else {
-				localPool.push(Math.random() * 1_000_000);
+				localPoolLive.push(localPool.push(Math.random() * 1_000_000));
 			}
 		}
 	}, {
@@ -489,20 +491,25 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 					bufferSize: 1024 * 16
 				});
 				localPool = new LocalPool(memory, { type: Uint32Array });
+				localPoolLive = [];
 				for(let i = 0; i < INSERT_COUNT; i++) {
-					localPool.push(Math.random() * 1_000_000);
+					localPoolLive.push(localPool.push(Math.random() * 1_000_000));
 				}
 			};
 		}
 	});
 
 	let sharedPool: SharedPool;
+	let sharedPoolLive: Array<number>;
 	bench('shared pool', () => {
 		for(let i = 0; i < RUN_COUNT; i++) {
-			if(Math.random() > 0.6) {
-				sharedPool.deleteIndex(randomIndex(sharedPool));
+			if(Math.random() > 0.6 && sharedPoolLive.length) {
+				let at = Math.floor(Math.random() * sharedPoolLive.length);
+				sharedPool.deleteIndex(sharedPoolLive[at]);
+				sharedPoolLive[at] = sharedPoolLive[sharedPoolLive.length - 1];
+				sharedPoolLive.pop();
 			} else {
-				sharedPool.push(Math.random() * 1_000_000);
+				sharedPoolLive.push(sharedPool.push(Math.random() * 1_000_000));
 			}
 		}
 	}, {
@@ -512,8 +519,9 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 					bufferSize: 1024 * 16
 				});
 				sharedPool = new SharedPool(memory);
+				sharedPoolLive = [];
 				for(let i = 0; i < INSERT_COUNT; i++) {
-					sharedPool.push(Math.random() * 1_000_000);
+					sharedPoolLive.push(sharedPool.push(Math.random() * 1_000_000));
 				}
 			};
 		}

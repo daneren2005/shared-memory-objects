@@ -1,5 +1,6 @@
 import SharedList from '../../src/shared-list';
 import MemoryHeap from '../../src/memory-heap';
+import { warn } from '../logger';
 
 let list: SharedList;
 let workerNumber: number;
@@ -41,7 +42,7 @@ self.onmessage = (e) => {
 		}
 
 		if(actualCount !== expectedCount) {
-			console.warn(`worker ${workerNumber} expected ${expectedCount} values but found ${actualCount}`);
+			warn(`worker ${workerNumber} expected ${expectedCount} values but found ${actualCount}`);
 		}
 	}
 };

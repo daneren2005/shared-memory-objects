@@ -13,7 +13,6 @@ describe('SharedPool', () => {
 		let vector = new SharedPool(memory, {
 			type: Uint32Array
 		});
-		expect(vector.recycleBufferLength).toEqual(4);
 
 		expect(vector.push(10)).toEqual(0);
 		expect(vector.push(52)).toEqual(1);
@@ -30,15 +29,6 @@ describe('SharedPool', () => {
 		expect(vector.get(2)).toEqual(4);
 		expect(vector.get(4)).toEqual(25);
 		expect(vector.bufferLength).toEqual(100);
-	});
-
-	it('uses configured recycleBufferLength', () => {
-		let vector = new SharedPool(memory, {
-			type: Uint32Array,
-			recycleBufferLength: 12
-		});
-
-		expect(vector.recycleBufferLength).toEqual(12);
 	});
 
 	it('continually grows memory as needed', () => {
@@ -61,9 +51,41 @@ describe('SharedPool', () => {
 		expect(vector.bufferLength).toEqual(1_100);
 	});
 
+	it('grows across many spine segments and frees them all', () => {
+		let startMemory = memory.currentUsed;
+		// maxChunkSize 1 means one chunk per element, so 200 pushes span spine segments 0 (32), 1 (64) and 2 (128)
+		let vector = new SharedPool(memory, {
+			type: Uint32Array,
+			maxChunkSize: 1
+		});
+
+		const expectedValues = [];
+		for(let i = 0; i < 200; i++) {
+			expect(vector.push(i)).toEqual(i);
+			expectedValues.push(i);
+		}
+
+		expect(vector.length).toEqual(200);
+		expect(flat(vector)).toEqual(expectedValues);
+		for(let i = 0; i < 200; i++) {
+			expect(vector.get(i)).toEqual(i);
+		}
+
+		// Recycle indexes that live in different segments to make sure the free-list still resolves the right chunk
+		vector.deleteIndex(5);
+		vector.deleteIndex(150);
+		expect(vector.length).toEqual(198);
+		expect(vector.push(999)).toEqual(150);
+		expect(vector.push(1000)).toEqual(5);
+		expect(vector.get(150)).toEqual(999);
+		expect(vector.get(5)).toEqual(1000);
+
+		vector.free();
+		expect(memory.currentUsed).toEqual(startMemory);
+	});
+
 	it('deleteIndex', () => {
 		let vector = new SharedPool(memory);
-		expect(vector.recycleBufferLength).toEqual(4);
 
 		vector.push(10);
 		vector.push(52);
