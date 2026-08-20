@@ -62,11 +62,13 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 - LocalPool - stable indexed data with a recycled pool that can only be pushed/deleted from main thread but can pass TypedArrays to other threads to operate on
 - SharedPool - stable indexed data with a recycled pool and maximum internal array sizes
 - SharedString
+- ConstantString - an immutable SharedString: the value is written once and never changes, so it drops the lock word and all of SharedString's read/write locking
 
 ## Thread Safety
 - Memory allocations is thread safe as long as it does not need to create a new buffer.  Right now that can only be done from the main thread.
 - SharedList, SharedVector, SharedPool, and SharedMap are all not thread safe.
 - SharedString is thread safe with a lock on read/write with a cached version of the string so it doesn't need to lock after the first read unless the string has changed.
+- ConstantString is safe to read from any thread without a lock precisely because it is never written after construction
 
 ## TODO
 - Make creating new buffers from allocations possible from multiple threads
