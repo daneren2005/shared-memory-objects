@@ -29,13 +29,13 @@ export type FloatType = 'f32' | 'f64';
  * {@link TYPE2GL}
  */
 export declare enum GLType {
-    I8 = 5120,
-    U8 = 5121,
-    I16 = 5122,
-    U16 = 5123,
-    I32 = 5124,
-    U32 = 5125,
-    F32 = 5126
+	I8 = 5120,
+	U8 = 5121,
+	I16 = 5122,
+	U16 = 5123,
+	I32 = 5124,
+	U32 = 5125,
+	F32 = 5126,
 }
 /**
  * Conversion from {@link GLType} to {@link Type} enums.
@@ -55,34 +55,34 @@ export declare const TYPE2GL: Record<Type, GLType | undefined>;
  * {@link sizeOf}.
  */
 export declare const SIZEOF: {
-    u8: number;
-    u8c: number;
-    i8: number;
-    u16: number;
-    i16: number;
-    u32: number;
-    i32: number;
-    i64: number;
-    u64: number;
-    f32: number;
-    f64: number;
+	u8: number
+	u8c: number
+	i8: number
+	u16: number
+	i16: number
+	u32: number
+	i32: number
+	i64: number
+	u64: number
+	f32: number
+	f64: number
 };
 /**
  * Bit shift values to convert byte addresses into array indices for all
  * {@link Type}s and {@link BigType}s.
  */
 export declare const BIT_SHIFTS: {
-    i8: number;
-    u8: number;
-    u8c: number;
-    i16: number;
-    u16: number;
-    i32: number;
-    u32: number;
-    i64: number;
-    u64: number;
-    f32: number;
-    f64: number;
+	i8: number
+	u8: number
+	u8c: number
+	i16: number
+	u16: number
+	i32: number
+	u32: number
+	i64: number
+	u64: number
+	f32: number
+	f64: number
 };
 export declare const FLOAT_ARRAY_CTORS: Record<FloatType, FloatArrayConstructor>;
 export declare const INT_ARRAY_CTORS: Record<IntType, IntArrayConstructor>;
@@ -90,26 +90,26 @@ export declare const UINT_ARRAY_CTORS: Record<UintType, UIntArrayConstructor>;
 export declare const BIGINT_ARRAY_CTORS: Record<BigType, BigIntArrayConstructor>;
 export declare const TYPEDARRAY_CTORS: Record<Type, TypedArrayConstructor>;
 export interface TypedArrayTypeMap extends Record<Type | GLType, TypedArray> {
-    u8: Uint8Array;
-    u8c: Uint8ClampedArray;
-    i8: Int8Array;
-    u16: Uint16Array;
-    i16: Int16Array;
-    u32: Uint32Array;
-    i32: Int32Array;
-    f32: Float32Array;
-    f64: Float64Array;
-    [GLType.U8]: Uint8Array;
-    [GLType.I8]: Int8Array;
-    [GLType.U16]: Uint16Array;
-    [GLType.I16]: Int16Array;
-    [GLType.U32]: Uint32Array;
-    [GLType.I32]: Int32Array;
-    [GLType.F32]: Float32Array;
+	u8: Uint8Array
+	u8c: Uint8ClampedArray
+	i8: Int8Array
+	u16: Uint16Array
+	i16: Int16Array
+	u32: Uint32Array
+	i32: Int32Array
+	f32: Float32Array
+	f64: Float64Array
+	[GLType.U8]: Uint8Array
+	[GLType.I8]: Int8Array
+	[GLType.U16]: Uint16Array
+	[GLType.I16]: Int16Array
+	[GLType.U32]: Uint32Array
+	[GLType.I32]: Int32Array
+	[GLType.F32]: Float32Array
 }
 export interface BigTypedArrayTypeMap extends Record<BigType, BigTypedArray> {
-    i64: BigInt64Array;
-    u64: BigUint64Array;
+	i64: BigInt64Array
+	u64: BigUint64Array
 }
 /**
  * Returns canonical {@link Type} value of `type` by first

@@ -7,7 +7,7 @@ import { getPointer, loadPointer, loadRawPointer, replaceRawPointer, storePointe
 enum TYPE {
 	uint32,
 	int32,
-	float32
+	float32,
 }
 
 // TODO: We need some sort of locking on insert/deletes!
@@ -77,13 +77,11 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 			const type = config?.type ?? Uint32Array;
 			if(type === Uint32Array) {
 				this.type = TYPE.uint32;
-			}
 			// @ts-expect-error
-			else if(type === Int32Array) {
+			} else if(type === Int32Array) {
 				this.type = TYPE.int32;
-			}
 			// @ts-expect-error
-			else if(type === Float32Array) {
+			} else if(type === Float32Array) {
 				this.type = TYPE.float32;
 			}
 			this.dataLength = config?.dataLength ?? 1;
@@ -258,7 +256,7 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 					memPool.free(blockRecord.byteOffset);
 					Atomics.sub(this.firstBlock.data, LENGTH_INDEX, 1);
 					updateLastBlock = false;
-				}
+				},
 			};
 
 			if(updateLastBlock) {
@@ -278,7 +276,7 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 
 	getSharedMemory(): SharedListMemory {
 		return {
-			firstBlock: this.firstBlock.getSharedMemory()
+			firstBlock: this.firstBlock.getSharedMemory(),
 		};
 	}
 
@@ -302,7 +300,7 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 		while(nextBlockByteOffset) {
 			let allocatedMemory = new AllocatedMemory(this.memory, {
 				bufferPosition: nextBlockPosition,
-				bufferByteOffset: nextBlockByteOffset
+				bufferByteOffset: nextBlockByteOffset,
 			});
 
 			({ bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(allocatedMemory.data, 0));

@@ -16,7 +16,7 @@ const isWorker = 'WorkerGlobalScope' in self;
 const COLORS: Record<Level, string> = {
 	log: '#dddddd',
 	warn: '#e5c07b',
-	error: '#e06c75'
+	error: '#e06c75',
 };
 
 export function log(message: string) {

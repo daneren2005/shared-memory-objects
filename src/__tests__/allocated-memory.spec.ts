@@ -11,8 +11,8 @@ describe('AllocatedMemory', () => {
 			expect(memory.getArray(Int32Array, 0, 5).byteOffset).toEqual(START_BYTE);
 			expect(memory.getArray(Int32Array, 2, 3).length).toEqual(3);
 			expect(memory.getArray(Int32Array, 2, 3).byteOffset).toEqual(START_BYTE + 8);
-			expect(() => memory.getArray(Int32Array, 0, 6)).toThrowError();
-			expect(() => memory.getArray(Int32Array, 2, 4)).toThrowError();
+			expect(() => memory.getArray(Int32Array, 0, 6)).toThrowError('Trying to grab more memory from AllocatedMemory.getArray');
+			expect(() => memory.getArray(Int32Array, 2, 4)).toThrowError('Trying to grab more memory from AllocatedMemory.getArray');
 		});
 
 		it('Int16Array', () => {
@@ -23,8 +23,8 @@ describe('AllocatedMemory', () => {
 			expect(memory.getArray(Int16Array, 0, 10).byteOffset).toEqual(START_BYTE);
 			expect(memory.getArray(Int16Array, 4, 6).length).toEqual(6);
 			expect(memory.getArray(Int16Array, 4, 6).byteOffset).toEqual(START_BYTE + 8);
-			expect(() => memory.getArray(Int16Array, 0, 12)).toThrowError();
-			expect(() => memory.getArray(Int16Array, 4, 8)).toThrowError();
+			expect(() => memory.getArray(Int16Array, 0, 12)).toThrowError('Trying to grab more memory from AllocatedMemory.getArray');
+			expect(() => memory.getArray(Int16Array, 4, 8)).toThrowError('Trying to grab more memory from AllocatedMemory.getArray');
 		});
 	});
 });

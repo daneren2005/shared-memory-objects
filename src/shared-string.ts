@@ -7,11 +7,11 @@ import { getPointer, loadPointer, loadRawPointer, storeRawPointer } from './util
 enum CHAR_TYPE {
 	UNDEFINED,
 	ASCII,
-	UTF16
+	UTF16,
 }
 const TYPED_ARRAY_MAP = {
 	[CHAR_TYPE.ASCII]: Uint8Array,
-	[CHAR_TYPE.UTF16]: Uint16Array
+	[CHAR_TYPE.UTF16]: Uint16Array,
 };
 
 const POINTER_INDEX = 0;
@@ -62,7 +62,7 @@ export default class SharedString {
 		if(value === '') {
 			return {
 				pointer: 0,
-				charType: CHAR_TYPE.ASCII
+				charType: CHAR_TYPE.ASCII,
 			};
 		}
 
@@ -85,7 +85,7 @@ export default class SharedString {
 
 		return {
 			pointer: allocatedMemory.pointer,
-			charType
+			charType,
 		};
 	}
 
@@ -99,7 +99,7 @@ export default class SharedString {
 		let { bufferPosition, bufferByteOffset } = getPointer(pointer);
 
 		lock(this.lock);
-		let charType = Atomics.load(this.allocatedMemory.data, TYPE_INDEX) as number;
+		let charType = Atomics.load(this.allocatedMemory.data, TYPE_INDEX);
 		// @ts-expect-error
 		let typedArray = TYPED_ARRAY_MAP[charType];
 		let bufferLength = Atomics.load(this.allocatedMemory.data, LENGTH_INDEX);

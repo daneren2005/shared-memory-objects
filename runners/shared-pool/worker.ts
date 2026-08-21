@@ -34,7 +34,7 @@ self.onmessage = (e) => {
 
 		self.postMessage({
 			done: true,
-			expectedCount
+			expectedCount,
 		});
 	} else if(e.data.check) {
 		let actualCount = 0;

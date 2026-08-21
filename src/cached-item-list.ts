@@ -62,7 +62,7 @@ export default abstract class CachedItemList<T extends Item> implements Iterable
 
 		return item;
 	}
-	protected abstract initItem(pointer: number): T | undefined
+	protected abstract initItem(pointer: number): T | undefined;
 
 	*[Symbol.iterator]() {
 		let iterator = this.list[Symbol.iterator]();
@@ -84,7 +84,7 @@ export default abstract class CachedItemList<T extends Item> implements Iterable
 			if(item) {
 				yield {
 					item,
-					deleteCurrent
+					deleteCurrent,
 				};
 			}
 		}
@@ -103,6 +103,8 @@ export default abstract class CachedItemList<T extends Item> implements Iterable
 				return item;
 			}
 		}
+
+		return undefined;
 	}
 	filter(callback: (entity: T) => boolean): Array<T> {
 		let items = [];

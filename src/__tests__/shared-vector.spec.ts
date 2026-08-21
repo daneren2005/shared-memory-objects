@@ -5,13 +5,13 @@ describe('SharedVector', () => {
 	let memory: MemoryHeap;
 	beforeEach(() => {
 		memory = new MemoryHeap({
-			bufferSize: 1024 * 16
+			bufferSize: 1024 * 16,
 		});
 	});
 
 	it('insert into vector', () => {
 		let vector = new SharedVector(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		expect(vector.push(10)).toEqual(0);
@@ -32,7 +32,7 @@ describe('SharedVector', () => {
 
 	it('continually grows memory as needed', () => {
 		let vector = new SharedVector(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		const expectedValues = [];
@@ -84,7 +84,7 @@ describe('SharedVector', () => {
 	it('with dataLength: 3', () => {
 		let vector = new SharedVector(memory, {
 			type: Uint32Array,
-			dataLength: 3
+			dataLength: 3,
 		});
 
 		vector.push(10);
@@ -95,7 +95,7 @@ describe('SharedVector', () => {
 		expect(flat(vector)).toEqual([
 			10, 0, 0,
 			52, 32, 6,
-			40, 41, 42
+			40, 41, 42,
 		]);
 		expect([...vector.at(0)]).toEqual([10, 0, 0]);
 		expect([...vector.at(1)]).toEqual([52, 32, 6]);
@@ -109,7 +109,7 @@ describe('SharedVector', () => {
 		expect(vector.length).toEqual(2);
 		expect(flat(vector)).toEqual([
 			10, 0, 0,
-			52, 32, 6
+			52, 32, 6,
 		]);
 		expect([...vector.at(0)]).toEqual([10, 0, 0]);
 		expect([...vector.at(1)]).toEqual([52, 32, 6]);
@@ -117,7 +117,7 @@ describe('SharedVector', () => {
 		vector.deleteIndex(0);
 		expect(vector.length).toEqual(1);
 		expect(flat(vector)).toEqual([
-			52, 32, 6
+			52, 32, 6,
 		]);
 		expect([...vector.at(0)]).toEqual([52, 32, 6]);
 		expect(vector.get(0)).toEqual(52);
@@ -126,7 +126,7 @@ describe('SharedVector', () => {
 
 	it('float32', () => {
 		let vector = new SharedVector(memory, {
-			type: Float32Array
+			type: Float32Array,
 		});
 
 		vector.push(10.5);
@@ -152,8 +152,8 @@ describe('SharedVector', () => {
 			bufferLength: 12,
 			firstBlock: {
 				bufferPosition: hostBlock.bufferPosition,
-				bufferByteOffset: hostBlock.bufferByteOffset + SharedVector.ALLOCATE_COUNT * Uint32Array.BYTES_PER_ELEMENT
-			}
+				bufferByteOffset: hostBlock.bufferByteOffset + SharedVector.ALLOCATE_COUNT * Uint32Array.BYTES_PER_ELEMENT,
+			},
 		});
 
 		expect(vector.dataLength).toEqual(2);
@@ -166,7 +166,7 @@ describe('SharedVector', () => {
 	it('can work from memory', () => {
 		let mainVector = new SharedVector(memory, {
 			type: Uint32Array,
-			dataLength: 3
+			dataLength: 3,
 		});
 		let cloneVector = new SharedVector(memory, mainVector.getSharedMemory());
 
@@ -178,13 +178,13 @@ describe('SharedVector', () => {
 		expect(flat(mainVector)).toEqual([
 			10, 0, 0,
 			52, 32, 6,
-			40, 41, 42
+			40, 41, 42,
 		]);
 		expect(cloneVector.length).toEqual(3);
 		expect(flat(cloneVector)).toEqual([
 			10, 0, 0,
 			52, 32, 6,
-			40, 41, 42
+			40, 41, 42,
 		]);
 
 		// Make sure growing works
@@ -200,7 +200,7 @@ describe('SharedVector', () => {
 
 	it('int32 stores negative numbers', () => {
 		let vector = new SharedVector(memory, {
-			type: Int32Array
+			type: Int32Array,
 		});
 
 		vector.push(-10);
@@ -232,7 +232,7 @@ describe('SharedVector', () => {
 
 	it('getCurrentArray returns a view of the current contents', () => {
 		let vector = new SharedVector(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		vector.push(10);
@@ -255,7 +255,7 @@ describe('SharedVector', () => {
 	it('throws when pushing an array larger than dataLength', () => {
 		let vector = new SharedVector(memory, {
 			type: Uint32Array,
-			dataLength: 2
+			dataLength: 2,
 		});
 
 		expect(() => vector.push([1, 2, 3])).toThrowError('Can\'t insert 3 array into shared list of 2 dataLength');
@@ -264,7 +264,7 @@ describe('SharedVector', () => {
 	it('free', () => {
 		let startMemory = memory.currentUsed;
 		let vector = new SharedVector(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		for(let i = 0; i < 1_000; i++) {

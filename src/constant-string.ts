@@ -6,11 +6,11 @@ import { getPointer, loadRawPointer, storeRawPointer } from './utils/pointer';
 enum CHAR_TYPE {
 	UNDEFINED,
 	ASCII,
-	UTF16
+	UTF16,
 }
 const TYPED_ARRAY_MAP = {
 	[CHAR_TYPE.ASCII]: Uint8Array,
-	[CHAR_TYPE.UTF16]: Uint16Array
+	[CHAR_TYPE.UTF16]: Uint16Array,
 };
 
 const POINTER_INDEX = 0;
@@ -57,7 +57,7 @@ export default class ConstantString {
 
 		// No lock: the value never changes after it is written once, so the memory it points at is never freed or
 		// rewritten underneath us.
-		let charType = Atomics.load(this.allocatedMemory.data, TYPE_INDEX) as number;
+		let charType = Atomics.load(this.allocatedMemory.data, TYPE_INDEX);
 		// @ts-expect-error
 		let typedArray = TYPED_ARRAY_MAP[charType];
 		let bufferLength = Atomics.load(this.allocatedMemory.data, LENGTH_INDEX);
@@ -69,7 +69,7 @@ export default class ConstantString {
 		if(value === '') {
 			return {
 				pointer: 0,
-				charType: CHAR_TYPE.ASCII
+				charType: CHAR_TYPE.ASCII,
 			};
 		}
 
@@ -92,7 +92,7 @@ export default class ConstantString {
 
 		return {
 			pointer: allocatedMemory.pointer,
-			charType
+			charType,
 		};
 	}
 

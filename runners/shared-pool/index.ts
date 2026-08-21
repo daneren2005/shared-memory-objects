@@ -7,11 +7,11 @@ import TestWorker from './worker?worker';
 captureGlobalErrors();
 
 const heap = new MemoryHeap({
-	bufferSize: 1024 * 1024
+	bufferSize: 1024 * 1024,
 });
 // Small maxChunkSize so we constantly cross chunk boundaries and hammer the buffer-growth path
 const pool = new SharedPool(heap, {
-	maxChunkSize: 100
+	maxChunkSize: 100,
 });
 
 const workers: Array<Worker> = [];
@@ -28,7 +28,7 @@ const workerValues = [
 	7645,
 	2334,
 	14,
-	3452452
+	3452452,
 ];
 
 const ITERATIONS = 5_000;
@@ -38,7 +38,7 @@ workerValues.forEach((value, index) => {
 	worker.postMessage({
 		heap: heap.getSharedMemory(),
 		pool: pool.getSharedMemory(),
-		workerNumber: index + 1
+		workerNumber: index + 1,
 	});
 
 	attachWorkerLogging(worker);
@@ -60,7 +60,7 @@ window.setTimeout(() => {
 	workerValues.forEach((value, index) => {
 		workers[index].postMessage({
 			iterations: ITERATIONS,
-			value
+			value,
 		});
 	});
 }, 500);
@@ -78,7 +78,7 @@ function checkIfDone() {
 
 		workers.forEach(worker => {
 			worker.postMessage({
-				check: true
+				check: true,
 			});
 		});
 	}

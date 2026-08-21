@@ -18,7 +18,7 @@ const GL2TYPE = {
 	[5123 /* U16 */]: 'u16',
 	[5124 /* I32 */]: 'i32',
 	[5125 /* U32 */]: 'u32',
-	[5126 /* F32 */]: 'f32'
+	[5126 /* F32 */]: 'f32',
 };
 const TYPE2GL = {
 	i8: 5120 /* I8 */,
@@ -29,7 +29,7 @@ const TYPE2GL = {
 	i32: 5124 /* I32 */,
 	u32: 5125 /* U32 */,
 	f32: 5126 /* F32 */,
-	f64: void 0
+	f64: void 0,
 };
 const SIZEOF = {
 	u8: 1,
@@ -42,7 +42,7 @@ const SIZEOF = {
 	i64: 8,
 	u64: 8,
 	f32: 4,
-	f64: 8
+	f64: 8,
 };
 const BIT_SHIFTS = {
 	i8: 0,
@@ -55,31 +55,31 @@ const BIT_SHIFTS = {
 	i64: 3,
 	u64: 3,
 	f32: 2,
-	f64: 3
+	f64: 3,
 };
 const FLOAT_ARRAY_CTORS = {
 	f32: Float32Array,
-	f64: Float64Array
+	f64: Float64Array,
 };
 const INT_ARRAY_CTORS = {
 	i8: Int8Array,
 	i16: Int16Array,
-	i32: Int32Array
+	i32: Int32Array,
 };
 const UINT_ARRAY_CTORS = {
 	u8: Uint8Array,
 	u8c: Uint8ClampedArray,
 	u16: Uint16Array,
-	u32: Uint32Array
+	u32: Uint32Array,
 };
 const BIGINT_ARRAY_CTORS = {
 	i64: BigInt64Array,
-	u64: BigUint64Array
+	u64: BigUint64Array,
 };
 const TYPEDARRAY_CTORS = {
 	...FLOAT_ARRAY_CTORS,
 	...INT_ARRAY_CTORS,
-	...UINT_ARRAY_CTORS
+	...UINT_ARRAY_CTORS,
 };
 const asNativeType = (type) => {
 	const t = GL2TYPE[type];
@@ -156,5 +156,5 @@ export {
 	widenFloat,
 	widenInt,
 	widenType,
-	widenUint
+	widenUint,
 };

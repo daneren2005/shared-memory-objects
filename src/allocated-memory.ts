@@ -40,7 +40,8 @@ export default class AllocatedMemory {
 	getArray<T extends TypedArray>(type: TypedArrayConstructor<T>, offset: number, length: number): T {
 		if(import.meta.env.MODE === 'development' || import.meta.env.MODE === 'test') {
 			if((offset + length) * type.BYTES_PER_ELEMENT > this.data.byteLength) {
-				const message = `Trying to grab more memory from AllocatedMemory.getArray then we have: ${offset * type.BYTES_PER_ELEMENT} + ${length * type.BYTES_PER_ELEMENT} > ${this.data.byteLength}`;
+				const message = 'Trying to grab more memory from AllocatedMemory.getArray then we have: '
+					+ `${offset * type.BYTES_PER_ELEMENT} + ${length * type.BYTES_PER_ELEMENT} > ${this.data.byteLength}`;
 				if(import.meta.env.MODE === 'test') {
 					throw new Error(message);
 				} else {
@@ -60,7 +61,7 @@ export default class AllocatedMemory {
 
 		return {
 			bufferPosition: this.bufferPosition,
-			bufferByteOffset: this.bufferByteOffset + offset * this.data.BYTES_PER_ELEMENT
+			bufferByteOffset: this.bufferByteOffset + offset * this.data.BYTES_PER_ELEMENT,
 		};
 	}
 
@@ -72,7 +73,7 @@ export default class AllocatedMemory {
 	getSharedMemory(): SharedAllocatedMemory {
 		return {
 			bufferPosition: this.bufferPosition,
-			bufferByteOffset: this.bufferByteOffset
+			bufferByteOffset: this.bufferByteOffset,
 		};
 	}
 }

@@ -21,14 +21,14 @@ export default class MemoryHeap {
 			this.buffers = config.buffers.map(buffer => {
 				return new MemoryBuffer({
 					buf: buffer,
-					skipInitialization: true
+					skipInitialization: true,
 				});
 			});
 
 			// TODO: This should be programic instead of hoping the first allocation is always byte 40
 			this.memory = new AllocatedMemory(this, {
 				bufferPosition: 0,
-				bufferByteOffset: 40
+				bufferByteOffset: 40,
 			});
 			this.isClone = true;
 		} else {
@@ -43,13 +43,13 @@ export default class MemoryHeap {
 			
 			let startBuffer = this.createBuffer(bufferSize);
 			this.buffers = [
-				startBuffer
+				startBuffer,
 			];
 			const data = startBuffer.callocAs('u32', 3);
 			if(data) {
 				this.memory = new AllocatedMemory(this, {
 					bufferPosition: 0,
-					bufferByteOffset: data.byteOffset
+					bufferByteOffset: data.byteOffset,
 				});
 			} else {
 				throw new Error('Failed to initialize first byte from buffer');
@@ -68,7 +68,7 @@ export default class MemoryHeap {
 	addSharedBuffer(data: GrowBufferData) {
 		this.buffers[data.bufferPosition] = new MemoryBuffer({
 			buf: data.buffer,
-			skipInitialization: true
+			skipInitialization: true,
 		});
 	}
 
@@ -79,7 +79,7 @@ export default class MemoryHeap {
 		this.buffers[nextBufferPosition] = buffer;
 		this.onGrowBufferHandlers.forEach(handler => handler({
 			bufferPosition: nextBufferPosition,
-			buffer: buffer.buf as SharedArrayBuffer
+			buffer: buffer.buf as SharedArrayBuffer,
 		}));
 
 		return buffer;
@@ -97,10 +97,11 @@ export default class MemoryHeap {
 			buf,
 
 			// We can't use this unless we can 100% guarantee that every thread will stop using memory the instant it is freed
-			// ex: Allocate 16 bytes.  Thread A frees that allocation and then allocates 12 bytes and 4 bytes, but Thread B is mid-execution on the old allocation can changes the internal state of the 4-byte allocation breaking everything
+			// ex: Allocate 16 bytes.  Thread A frees that allocation and then allocates 12 bytes and 4 bytes, but Thread B is mid-execution
+			// on the old allocation can changes the internal state of the 4-byte allocation breaking everything
 			// After the internal state is wrong MemoryBuffer will loose track of which blocks are where and how big they are
 			compact: false,
-			split: false
+			split: false,
 		});
 	}
 
@@ -121,7 +122,12 @@ export default class MemoryHeap {
 			const data = buffer.callocAs('u32', count);
 			if(data) {
 				// Auto grow when nearly full when we need buffer to already be sync'd between threads BEFORE we try to use it
-				if(i === (this.buffers.length - 1) && Atomics.load(this.memory.data, BUFFER_COUNT_INDEX) === this.buffers.length && this.memory.data[BUFFER_AUTO_GROW_INDEX] < 100 && this.memory.data[BUFFER_AUTO_GROW_INDEX] > 0) {
+				if(
+					i === (this.buffers.length - 1)
+					&& Atomics.load(this.memory.data, BUFFER_COUNT_INDEX) === this.buffers.length
+					&& this.memory.data[BUFFER_AUTO_GROW_INDEX] < 100
+					&& this.memory.data[BUFFER_AUTO_GROW_INDEX] > 0
+				) {
 					const percentFull = buffer.top / buffer.end;
 					if(percentFull > (this.memory.data[BUFFER_AUTO_GROW_INDEX] / 100)) {
 						this.growBuffer();
@@ -130,7 +136,7 @@ export default class MemoryHeap {
 
 				return new AllocatedMemory(this, {
 					data,
-					buffer
+					buffer,
 				});
 			}
 		}
@@ -145,7 +151,7 @@ export default class MemoryHeap {
 		if(data) {
 			return new AllocatedMemory(this, {
 				data,
-				buffer
+				buffer,
 			});
 		} else {
 			throw new Error(`Unable to allocate ${count} numbers even after adding a new buffer`);
@@ -170,7 +176,7 @@ export default class MemoryHeap {
 
 	getSharedMemory(): MemoryHeapMemory {
 		return {
-			buffers: this.buffers.map(buffer => buffer.buf as SharedArrayBuffer)
+			buffers: this.buffers.map(buffer => buffer.buf as SharedArrayBuffer),
 		};
 	}
 }

@@ -66,7 +66,8 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 
 ## Thread Safety
 - Memory allocations is thread safe as long as it does not need to create a new buffer.  Right now that can only be done from the main thread.
-- SharedList, SharedVector, SharedPool, and SharedMap are all not thread safe.
+- SharedPool is thread safe
+- SharedList, SharedVector, and SharedMap are *not* thread safe.
 - SharedString is thread safe with a lock on read/write with a cached version of the string so it doesn't need to lock after the first read unless the string has changed.
 - ConstantString is safe to read from any thread without a lock precisely because it is never written after construction
 

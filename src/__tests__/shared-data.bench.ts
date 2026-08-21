@@ -21,7 +21,7 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 					sharedList.insert(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let sharedVector: SharedVector;
@@ -32,14 +32,14 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 100
+					bufferSize: 1024 * 100,
 				});
 				sharedVector = new SharedVector(memory);
 				for(let i = 0; i < ITERATE_COUNT; i++) {
 					sharedVector.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 	let sharedVector2: SharedVector;
 	bench('shared vector:getCurrentArray()', () => {
@@ -50,14 +50,14 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 100
+					bufferSize: 1024 * 100,
 				});
 				sharedVector2 = new SharedVector(memory);
 				for(let i = 0; i < ITERATE_COUNT; i++) {
 					sharedVector2.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let localPool: LocalPool;
@@ -68,14 +68,14 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 100
+					bufferSize: 1024 * 100,
 				});
 				localPool = new LocalPool(memory, { type: Uint32Array });
 				for(let i = 0; i < ITERATE_COUNT; i++) {
 					localPool.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let sharedPool: SharedPool;
@@ -86,14 +86,14 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 100
+					bufferSize: 1024 * 100,
 				});
 				sharedPool = new SharedPool(memory);
 				for(let i = 0; i < ITERATE_COUNT; i++) {
 					sharedPool.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let list: Array<number>;
@@ -108,7 +108,7 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 					list.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 });
 
@@ -124,14 +124,14 @@ describe(`Shared Data Structures: ${INDEX_COUNT} indexed locations`, () => {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 100
+					bufferSize: 1024 * 100,
 				});
 				sharedVector = new SharedVector(memory);
 				for(let i = 0; i < INDEX_COUNT; i++) {
 					sharedVector.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let localPool: LocalPool;
@@ -143,14 +143,14 @@ describe(`Shared Data Structures: ${INDEX_COUNT} indexed locations`, () => {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 100
+					bufferSize: 1024 * 100,
 				});
 				localPool = new LocalPool(memory, { type: Uint32Array });
 				for(let i = 0; i < INDEX_COUNT; i++) {
 					localPool.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let sharedPool: SharedPool;
@@ -162,14 +162,14 @@ describe(`Shared Data Structures: ${INDEX_COUNT} indexed locations`, () => {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 100
+					bufferSize: 1024 * 100,
 				});
 				sharedPool = new SharedPool(memory);
 				for(let i = 0; i < INDEX_COUNT; i++) {
 					sharedPool.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 	
 	let list: Array<number>;
@@ -186,7 +186,7 @@ describe(`Shared Data Structures: ${INDEX_COUNT} indexed locations`, () => {
 					list.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 });
 
@@ -219,7 +219,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
 	bench('shared vector with correct amount initialized', () => {
 		let memory = new MemoryHeap();
 		let list = new SharedVector(memory, {
-			bufferLength: INSERT_COUNT + 2
+			bufferLength: INSERT_COUNT + 2,
 		});
 
 		for(let i = 0; i < INSERT_COUNT; i++) {
@@ -261,7 +261,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
 					sharedPool.deleteIndex(i);
 				}
 			};
-		}
+		},
 	});
 	bench('native array', () => {
 		let list: Array<number> = [];
@@ -273,7 +273,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
 
 const DELETE_COUNT = 1_000;
 describe(`Shared Data Structures: ${DELETE_COUNT} deletes end element`, () => {
-	const INSERT_COUNT = 2_000;
+	const LOCAL_INSERT_COUNT = 2_000;
 
 	let sharedList: SharedList;
 	bench('shared list', () => {
@@ -285,11 +285,11 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes end element`, () => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap();
 				sharedList = new SharedList(memory);
-				for(let i = 0; i < INSERT_COUNT; i++) {
+				for(let i = 0; i < LOCAL_INSERT_COUNT; i++) {
 					sharedList.insert(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let sharedVector: SharedVector;
@@ -301,14 +301,14 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes end element`, () => {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 16
+					bufferSize: 1024 * 16,
 				});
 				sharedVector = new SharedVector(memory);
-				for(let i = 0; i < INSERT_COUNT; i++) {
+				for(let i = 0; i < LOCAL_INSERT_COUNT; i++) {
 					sharedVector.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let nativeList: Array<number> = [];
@@ -320,16 +320,16 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes end element`, () => {
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				nativeList = [];
-				for(let i = 0; i < INSERT_COUNT; i++) {
+				for(let i = 0; i < LOCAL_INSERT_COUNT; i++) {
 					nativeList.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 });
 
 describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () => {
-	const INSERT_COUNT = 2_000;
+	const LOCAL_INSERT_COUNT = 2_000;
 
 	let sharedList: SharedList;
 	bench('shared list', () => {
@@ -341,11 +341,11 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () =>
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap();
 				sharedList = new SharedList(memory);
-				for(let i = 0; i < INSERT_COUNT; i++) {
+				for(let i = 0; i < LOCAL_INSERT_COUNT; i++) {
 					sharedList.insert(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let sharedVector: SharedVector;
@@ -357,14 +357,14 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () =>
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 16
+					bufferSize: 1024 * 16,
 				});
 				sharedVector = new SharedVector(memory);
-				for(let i = 0; i < INSERT_COUNT; i++) {
+				for(let i = 0; i < LOCAL_INSERT_COUNT; i++) {
 					sharedVector.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 
@@ -377,14 +377,14 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () =>
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 16
+					bufferSize: 1024 * 16,
 				});
 				localPool = new LocalPool(memory, { type: Uint32Array });
-				for(let i = 0; i < INSERT_COUNT; i++) {
+				for(let i = 0; i < LOCAL_INSERT_COUNT; i++) {
 					localPool.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let sharedPool: SharedPool;
@@ -396,14 +396,14 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () =>
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 16
+					bufferSize: 1024 * 16,
 				});
 				sharedPool = new SharedPool(memory);
-				for(let i = 0; i < INSERT_COUNT; i++) {
+				for(let i = 0; i < LOCAL_INSERT_COUNT; i++) {
 					sharedPool.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let nativeList: Array<number> = [];
@@ -415,11 +415,11 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () =>
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				nativeList = [];
-				for(let i = 0; i < INSERT_COUNT; i++) {
+				for(let i = 0; i < LOCAL_INSERT_COUNT; i++) {
 					nativeList.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 });
 
@@ -444,7 +444,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 					sharedList.insert(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	let sharedVector: SharedVector;
@@ -460,14 +460,14 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 16
+					bufferSize: 1024 * 16,
 				});
 				sharedVector = new SharedVector(memory);
 				for(let i = 0; i < INSERT_COUNT; i++) {
 					sharedVector.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 
 	// Stable-index pools can't delete the same index twice, so track the live indexes and delete a real one
@@ -488,7 +488,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 16
+					bufferSize: 1024 * 16,
 				});
 				localPool = new LocalPool(memory, { type: Uint32Array });
 				localPoolLive = [];
@@ -496,7 +496,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 					localPoolLive.push(localPool.push(Math.random() * 1_000_000));
 				}
 			};
-		}
+		},
 	});
 
 	let sharedPool: SharedPool;
@@ -516,7 +516,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 		setup: (task) => {
 			task.opts.beforeEach = () => {
 				let memory = new MemoryHeap({
-					bufferSize: 1024 * 16
+					bufferSize: 1024 * 16,
 				});
 				sharedPool = new SharedPool(memory);
 				sharedPoolLive = [];
@@ -524,7 +524,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 					sharedPoolLive.push(sharedPool.push(Math.random() * 1_000_000));
 				}
 			};
-		}
+		},
 	});
 
 	let nativeList: Array<number> = [];
@@ -544,7 +544,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random ele
 					nativeList.push(Math.random() * 1_000_000);
 				}
 			};
-		}
+		},
 	});
 });
 

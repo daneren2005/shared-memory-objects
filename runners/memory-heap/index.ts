@@ -6,7 +6,7 @@ import TestWorker from './worker?worker';
 captureGlobalErrors();
 
 const memory = new MemoryHeap({
-	bufferSize: 1024 * 10
+	bufferSize: 1024 * 10,
 });
 
 const workers: Array<Worker> = [];
@@ -19,14 +19,14 @@ const workerAllocations = [
 	6,
 	3,
 	2,
-	1
+	1,
 ];
 
 workerAllocations.forEach((allocations, index) => {
 	let worker = new TestWorker();
 	worker.postMessage({
 		init: memory.getSharedMemory(),
-		workerNumber: index + 1
+		workerNumber: index + 1,
 	});
 
 	attachWorkerLogging(worker);
@@ -43,7 +43,7 @@ workerAllocations.forEach((allocations, index) => {
 				}
 
 				workers[i].postMessage({
-					growBuffer: e.data.growBuffer
+					growBuffer: e.data.growBuffer,
 				});
 			}
 		}
@@ -59,7 +59,7 @@ window.setTimeout(() => {
 	workerAllocations.forEach((allocations, index) => {
 		workers[index].postMessage({
 			iterations: 5_000,
-			allocations
+			allocations,
 		});
 	});
 }, 500);
@@ -72,7 +72,7 @@ function checkIfDone() {
 
 		workers.forEach(worker => {
 			worker.postMessage({
-				check: true
+				check: true,
 			});
 		});
 	}

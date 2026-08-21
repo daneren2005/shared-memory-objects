@@ -14,14 +14,14 @@ self.onmessage = (e) => {
 
 		memory.addOnGrowBufferHandlers(data => {
 			self.postMessage({
-				growBuffer: data
+				growBuffer: data,
 			});
 		});
 	} else if(e.data.iterations) {
 		for(let i = 0; i < e.data.iterations; i++) {
 			let allocated = memory.allocUI32(e.data.allocations);
-			for(let i = 0; i < allocated.data.length; i++) {
-				allocated.data[i] = workerNumber;
+			for(let j = 0; j < allocated.data.length; j++) {
+				allocated.data[j] = workerNumber;
 			}
 			allocatedBlocks.push(allocated);
 
@@ -33,7 +33,7 @@ self.onmessage = (e) => {
 		}
 
 		self.postMessage({
-			done: true
+			done: true,
 		});
 	} else if(e.data.check) {
 		for(let i = 0; i < allocatedBlocks.length; i++) {
@@ -52,5 +52,5 @@ self.onmessage = (e) => {
 
 function randomPop<T>(array: Array<T>): T {
 	let index = Math.floor(Math.random() * array.length );
-	return array.splice(index, 1)[0] as T;
+	return array.splice(index, 1)[0];
 }

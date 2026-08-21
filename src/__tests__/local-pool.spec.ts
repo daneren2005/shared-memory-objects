@@ -5,13 +5,13 @@ describe('LocalPool', () => {
 	let memory: MemoryHeap;
 	beforeEach(() => {
 		memory = new MemoryHeap({
-			bufferSize: 1024 * 16
+			bufferSize: 1024 * 16,
 		});
 	});
 
 	it('insert', () => {
 		let vector = new LocalPool(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		expect(vector.push(10)).toEqual(0);
@@ -34,7 +34,7 @@ describe('LocalPool', () => {
 	it('continually grows memory as needed', () => {
 		let vector = new LocalPool(memory, {
 			type: Uint32Array,
-			maxChunkSize: 100
+			maxChunkSize: 100,
 		});
 
 		const expectedValues = [];
@@ -53,7 +53,7 @@ describe('LocalPool', () => {
 
 	it('deleteIndex', () => {
 		let vector = new LocalPool(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		vector.push(10);
@@ -91,7 +91,7 @@ describe('LocalPool', () => {
 	it('with dataLength: 3', () => {
 		let vector = new LocalPool(memory, {
 			type: Uint32Array,
-			dataLength: 3
+			dataLength: 3,
 		});
 
 		vector.push(10);
@@ -102,7 +102,7 @@ describe('LocalPool', () => {
 		expect(flat(vector)).toEqual([
 			10, 0, 0,
 			52, 32, 6,
-			40, 41, 42
+			40, 41, 42,
 		]);
 		expect([...vector.at(0)]).toEqual([10, 0, 0]);
 		expect([...vector.at(1)]).toEqual([52, 32, 6]);
@@ -116,7 +116,7 @@ describe('LocalPool', () => {
 		expect(vector.length).toEqual(2);
 		expect(flat(vector)).toEqual([
 			52, 32, 6,
-			40, 41, 42
+			40, 41, 42,
 		]);
 		// Indexes are stable and do not change
 		expect([...vector.at(1)]).toEqual([52, 32, 6]);
@@ -126,7 +126,7 @@ describe('LocalPool', () => {
 
 	it('float32', () => {
 		let vector = new LocalPool(memory, {
-			type: Float32Array
+			type: Float32Array,
 		});
 
 		vector.push(10.5);
@@ -147,7 +147,7 @@ describe('LocalPool', () => {
 	it('float64', () => {
 		const startMemory = memory.currentUsed;
 		let vector = new LocalPool(memory, {
-			type: Float64Array
+			type: Float64Array,
 		});
 		expect(vector.byteMultipler).toEqual(2);
 
@@ -184,7 +184,7 @@ describe('LocalPool', () => {
 	it('free', () => {
 		let startMemory = memory.currentUsed;
 		let vector = new LocalPool(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		for(let i = 0; i < 1_000; i++) {
@@ -197,7 +197,7 @@ describe('LocalPool', () => {
 
 	it('clear', () => {
 		let vector = new LocalPool(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		vector.push(10);

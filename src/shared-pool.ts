@@ -9,7 +9,7 @@ enum TYPE {
 	uint32,
 	int32,
 	float32,
-	float64
+	float64,
 }
 
 const LENGTH_INDEX = 0;
@@ -112,13 +112,11 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 			const type = config?.type ?? Uint32Array;
 			if(type === Uint32Array) {
 				this.type = TYPE.uint32;
-			}
 			// @ts-expect-error
-			else if(type === Int32Array) {
+			} else if(type === Int32Array) {
 				this.type = TYPE.int32;
-			}
 			// @ts-expect-error
-			else if(type === Float32Array) {
+			} else if(type === Float32Array) {
 				this.type = TYPE.float32;
 			// @ts-expect-error
 			} else if(type === Float64Array) {
@@ -385,7 +383,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 
 	getSharedMemory(): SharedPoolMemory {
 		return {
-			firstBlock: this.firstBlock.getSharedMemory()
+			firstBlock: this.firstBlock.getSharedMemory(),
 		};
 	}
 }

@@ -11,7 +11,7 @@ describe('SerializeObject', () => {
 		const object = {
 			test: 12.5,
 			test2: 'string',
-			fa: 'blue'
+			fa: 'blue',
 		};
 		let memory = serializeObjectToMemory(heap, object);
 
@@ -25,7 +25,7 @@ describe('SerializeObject', () => {
 		const object = {
 			a: 1,
 			b: 'two',
-			c: 3.25
+			c: 3.25,
 		};
 		let memory = serializeObjectToMemory(heap, object);
 
@@ -39,7 +39,7 @@ describe('SerializeObject', () => {
 		const object = {
 			neg: -42.5,
 			zero: 0,
-			pos: 17
+			pos: 17,
 		};
 		let memory = serializeObjectToMemory(heap, object);
 
@@ -52,7 +52,7 @@ describe('SerializeObject', () => {
 	it('handles empty string values', () => {
 		const object = {
 			empty: '',
-			filled: 'value'
+			filled: 'value',
 		};
 		let memory = serializeObjectToMemory(heap, object);
 

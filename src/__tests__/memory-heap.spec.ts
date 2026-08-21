@@ -100,7 +100,7 @@ describe('MemoryHeap', () => {
 
 	it('growing memory by doubles while freeing previous', () => {
 		let memory = new MemoryHeap({
-			bufferSize: 1_024 * 16
+			bufferSize: 1_024 * 16,
 		});
 		let allocSize = 40;
 
@@ -118,7 +118,7 @@ describe('MemoryHeap', () => {
 	it('Block creating with bufferSize greater than 1MB', () => {
 		let error: Error | null = null;
 		try {
-			new MemoryHeap({ bufferSize: Math.pow(2, 30) });
+			void new MemoryHeap({ bufferSize: Math.pow(2, 30) });
 		} catch(e) {
 			error = e as Error;
 		}
@@ -135,8 +135,11 @@ describe('MemoryHeap', () => {
 		let block3 = memory.allocUI32(4);
 
 		block1.data.fill(20);
-		memory.getSharedAlloc(block2.getSharedMemory());
-		memory.getSharedAlloc(block3.getSharedMemory());
+		let shared2 = memory.getSharedAlloc(block2.getSharedMemory());
+		let shared3 = memory.getSharedAlloc(block3.getSharedMemory());
+
+		expect(shared2).toBeDefined();
+		expect(shared3).toBeDefined();
 	});
 
 	it('round allocs', () => {

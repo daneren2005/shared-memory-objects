@@ -18,6 +18,20 @@ const STATE_MIN_SPLIT = 6;
 const MASK_COMPACT = 1;
 const MASK_SPLIT = 2;
 
+const SIZEOF = {
+	u8: 1,
+	u8c: 1,
+	i8: 1,
+	u16: 2,
+	i16: 2,
+	u32: 4,
+	i32: 4,
+	i64: 8,
+	u64: 8,
+	f32: 4,
+	f64: 8,
+};
+
 const SIZEOF_STATE = 8 * 4;
 
 const MEM_BLOCK_SIZE = 0;
@@ -59,8 +73,8 @@ export default class MemoryBuffer {
 			if(top >= resolvedEnd) {
 				throw new Error(
 					`insufficient address range (0x${this.start.toString(
-						16
-					)} - 0x${resolvedEnd.toString(16)})`
+						16,
+					)} - 0x${resolvedEnd.toString(16)})`,
 				);
 			}
 
@@ -97,7 +111,7 @@ export default class MemoryBuffer {
 			used: listStats(this._used),
 			top: this.top,
 			available: this.end - this.top + free.size,
-			total: this.buf.byteLength
+			total: this.buf.byteLength,
 		};
 	}
 
@@ -137,7 +151,7 @@ export default class MemoryBuffer {
 					prev,
 					blockSize,
 					paddedSize,
-					isTop
+					isTop,
 				);
 
 				unlock(this.lock);
@@ -166,7 +180,7 @@ export default class MemoryBuffer {
 		prev: number,
 		blockSize: number,
 		paddedSize: number,
-		isTop: boolean
+		isTop: boolean,
 	) {
 		if(isTop && block + paddedSize > this.end) return 0;
 		if(prev) {
@@ -181,7 +195,7 @@ export default class MemoryBuffer {
 		} else if(this.doSplit) {
 			const excess = blockSize - paddedSize;
 			excess >= this.minSplit &&
-				this.splitBlock(block, paddedSize, excess);
+			this.splitBlock(block, paddedSize, excess);
 		}
 		return blockDataAddress(block);
 	}
@@ -206,7 +220,7 @@ export default class MemoryBuffer {
 			this.u8.copyWithin(
 				blockDataAddress(newAddr),
 				blockDataAddress(oldAddr),
-				blockEnd
+				blockEnd,
 			);
 		}
 		return blockDataAddress(newAddr);
@@ -243,11 +257,11 @@ export default class MemoryBuffer {
 
 	reallocArray<T extends TypedArray>(array: T, num: number): T | undefined {
 		if(array.buffer !== this.buf) {
-			return;
+			return undefined;
 		}
 		const addr = this.realloc(
 			array.byteOffset,
-			num * array.BYTES_PER_ELEMENT
+			num * array.BYTES_PER_ELEMENT,
 		);
 		return addr
 			? new (<any>array.constructor)(this.buf, addr, num)
@@ -458,8 +472,8 @@ export default class MemoryBuffer {
 			this.initBlock(
 				block + this.setBlockSize(block, blockSize),
 				excess,
-				0
-			)
+				0,
+			),
 		);
 		this.doCompact && this.compact();
 	}
@@ -545,29 +559,23 @@ export default class MemoryBuffer {
  *
  * @param blockAddress -
  */
-const blockDataAddress = (blockAddress: number) => blockAddress > 0 ? blockAddress + SIZEOF_MEM_BLOCK : 0;
+function blockDataAddress(blockAddress: number) {
+	return blockAddress > 0 ? blockAddress + SIZEOF_MEM_BLOCK : 0;
+}
 
 /**
  * Returns block start address for given data address and alignment.
  *
  * @param dataAddress -
  */
-const blockSelfAddress = (dataAddress: number) => dataAddress > 0 ? dataAddress - SIZEOF_MEM_BLOCK : 0;
+function blockSelfAddress(dataAddress: number) {
+	return dataAddress > 0 ? dataAddress - SIZEOF_MEM_BLOCK : 0;
+}
 
-const align = (addr: number, size: number) => (size--, addr + size & ~size);
-const SIZEOF = {
-	u8: 1,
-	u8c: 1,
-	i8: 1,
-	u16: 2,
-	i16: 2,
-	u32: 4,
-	i32: 4,
-	i64: 8,
-	u64: 8,
-	f32: 4,
-	f64: 8
-};
+function align(addr: number, size: number) {
+	size--;
+	return addr + size & ~size;
+}
 type Type = 'u8' | 'u8c' | 'i8' | 'u16' | 'i16' | 'u32' | 'i32' | 'f32' | 'f64';
 
 interface MemoryBufferConfig {
@@ -575,13 +583,13 @@ interface MemoryBufferConfig {
 	 * Backing ArrayBuffer (or SharedArrayBuffer). If not given, a new
 	 * one will be created with given `size`.
 	 */
-	buf: ArrayBufferLike;
+	buf: ArrayBufferLike
 	/**
 	 * Byte size for newly created ArrayBuffers (if `buf` is not given).
 	 *
 	 * @defaultValue 0x1000 (4KB)
 	 */
-	size: number;
+	size: number
 	/**
 	 * Anchor index (byte address) inside the array buffer. The MemPool
 	 * stores its internal state from the given address and heap space
@@ -593,14 +601,14 @@ interface MemoryBufferConfig {
 	 *
 	 * @defaultValue 0
 	 */
-	start: number;
+	start: number
 	/**
 	 * Byte address (+1) of the end of the memory region managed by the
 	 * {@link MemPool}.
 	 *
 	 * @defaultValue end of the backing ArrayBuffer
 	 */
-	end: number;
+	end: number
 	/**
 	 * Number of bytes to align memory blocks to. MUST be a power of 2
 	 * and >= 8. Use 16 if the pool is being used for allocating memory
@@ -608,7 +616,7 @@ interface MemoryBufferConfig {
 	 *
 	 * @defaultValue 8
 	 */
-	align: Pow2;
+	align: Pow2
 	/**
 	 * Flag to configure memory block compaction. If true,
 	 * adjoining free blocks (in terms of address space) will be merged
@@ -616,7 +624,7 @@ interface MemoryBufferConfig {
 	 *
 	 * @defaultValue true
 	 */
-	compact: boolean;
+	compact: boolean
 	/**
 	 * Flag to configure memory block splitting. If true, and when the
 	 * allocator is re-using a previously freed block larger than the
@@ -626,7 +634,7 @@ interface MemoryBufferConfig {
 	 *
 	 * @defaultValue true
 	 */
-	split: boolean;
+	split: boolean
 	/**
 	 * Only used if `split` behavior is enabled. Defines min number of
 	 * excess bytes available in a block for memory block splitting to
@@ -634,7 +642,7 @@ interface MemoryBufferConfig {
 	 *
 	 * @defaultValue 16, MUST be > 8
 	 */
-	minSplit: number;
+	minSplit: number
 	/**
 	 * Only needed when sharing the underlying ArrayBuffer. If true, the
 	 * {@link MemPool} constructor will NOT initialize its internal state and
@@ -644,27 +652,27 @@ interface MemoryBufferConfig {
 	 *
 	 * @defaultValue false
 	 */
-	skipInitialization: boolean;
+	skipInitialization: boolean
 }
 interface MemoryBufferStats {
 	/**
 	 * Free block stats.
 	 */
-	free: { count: number; size: number };
+	free: { count: number, size: number }
 	/**
 	 * Used block stats.
 	 */
-	used: { count: number; size: number };
+	used: { count: number, size: number }
 	/**
 	 * Current top address.
 	 */
-	top: number;
+	top: number
 	/**
 	 * Bytes available
 	 */
-	available: number;
+	available: number
 	/**
 	 * Total pool size.
 	 */
-	total: number;
+	total: number
 }

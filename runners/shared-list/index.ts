@@ -7,7 +7,7 @@ import TestWorker from './worker?worker';
 captureGlobalErrors();
 
 const heap = new MemoryHeap({
-	bufferSize: 1024 * 1024
+	bufferSize: 1024 * 1024,
 });
 const list = new SharedList(heap);
 
@@ -18,7 +18,7 @@ const workerValues = [
 	5,
 	8,
 	52,
-	9
+	9,
 ];
 
 workerValues.forEach((allocations, index) => {
@@ -26,7 +26,7 @@ workerValues.forEach((allocations, index) => {
 	worker.postMessage({
 		heap: heap.getSharedMemory(),
 		list: list.getSharedMemory(),
-		workerNumber: index + 1
+		workerNumber: index + 1,
 	});
 
 	attachWorkerLogging(worker);
@@ -47,7 +47,7 @@ window.setTimeout(() => {
 	workerValues.forEach((value, index) => {
 		workers[index].postMessage({
 			iterations: 5_000,
-			value
+			value,
 		});
 	});
 }, 500);
@@ -60,7 +60,7 @@ function checkIfDone() {
 
 		workers.forEach(worker => {
 			worker.postMessage({
-				check: true
+				check: true,
 			});
 		});
 	}

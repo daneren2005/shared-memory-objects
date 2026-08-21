@@ -240,7 +240,7 @@ describe('SharedList', () => {
 
 	it('with int32', () => {
 		let list = new SharedList(memory, {
-			type: Int32Array
+			type: Int32Array,
 		});
 
 		list.insert(5);
@@ -254,7 +254,7 @@ describe('SharedList', () => {
 	});
 	it('with float32', () => {
 		let list = new SharedList(memory, {
-			type: Float32Array
+			type: Float32Array,
 		});
 
 		list.insert(5.5);
@@ -270,7 +270,7 @@ describe('SharedList', () => {
 	it('with dataLength = 3', () => {
 		let list = new SharedList(memory, {
 			type: Int32Array,
-			dataLength: 3
+			dataLength: 3,
 		});
 
 		list.insert(5);
@@ -283,7 +283,7 @@ describe('SharedList', () => {
 		expect(flat(list)).toEqual([
 			5, 0, 0,
 			-10, 20, 1,
-			4, -40, 0
+			4, -40, 0,
 		]);
 
 		// Don't delete middle values
@@ -291,14 +291,14 @@ describe('SharedList', () => {
 		expect(flat(list)).toEqual([
 			5, 0, 0,
 			-10, 20, 1,
-			4, -40, 0
+			4, -40, 0,
 		]);
 
 		// Allow deleting first value only
 		list.deleteValue(-10);
 		expect(flat(list)).toEqual([
 			5, 0, 0,
-			4, -40, 0
+			4, -40, 0,
 		]);
 		expect(list.length).toEqual(2);
 
@@ -306,7 +306,7 @@ describe('SharedList', () => {
 		list.deleteValue([4, 10, 0]);
 		list.deleteValue([5, 0, 0]);
 		expect(flat(list)).toEqual([
-			4, -40, 0
+			4, -40, 0,
 		]);
 		expect(list.length).toEqual(1);
 	});
@@ -314,7 +314,7 @@ describe('SharedList', () => {
 	it('initWithBlock', () => {
 		let block = memory.allocUI32(SharedList.ALLOCATE_COUNT);
 		let list = new SharedList(memory, {
-			initWithBlock: block
+			initWithBlock: block,
 		});
 
 		list.insert(5);

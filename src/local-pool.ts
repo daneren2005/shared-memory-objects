@@ -39,7 +39,7 @@ export default class LocalPool<T extends Uint32Array | Int32Array | Float32Array
 
 		let firstArray = memory.allocUI32(maxLength * dataLength * this.byteMultipler);
 		this.pointers.push(firstArray.pointer);
-		let data: T = new this.typeConstructor(firstArray.data.buffer, firstArray.bufferByteOffset, this.dataLength * this.maxChunkSize) as T;
+		let data: T = new this.typeConstructor(firstArray.data.buffer, firstArray.bufferByteOffset, this.dataLength * this.maxChunkSize);
 		this.fullDataBlocks[0] = data;
 	}
 
@@ -73,7 +73,7 @@ export default class LocalPool<T extends Uint32Array | Int32Array | Float32Array
 		if(pointerIndex >= this.pointers.length) {
 			let newArray = this.memory.allocUI32(this.maxChunkSize * this.dataLength * this.byteMultipler);
 			this.pointers.push(newArray.pointer);
-			let data: T = new this.typeConstructor(newArray.data.buffer, newArray.bufferByteOffset, this.dataLength * this.maxChunkSize) as T;
+			let data: T = new this.typeConstructor(newArray.data.buffer, newArray.bufferByteOffset, this.dataLength * this.maxChunkSize);
 			this.fullDataBlocks[pointerIndex] = data;
 		}
 
@@ -130,7 +130,7 @@ export default class LocalPool<T extends Uint32Array | Int32Array | Float32Array
 		}
 
 		let array = new AllocatedMemory(this.memory, getPointer(this.pointers[pointerIndex]));
-		let data: T = new this.typeConstructor(array.data.buffer, array.bufferByteOffset, this.dataLength * this.maxChunkSize) as T;
+		let data: T = new this.typeConstructor(array.data.buffer, array.bufferByteOffset, this.dataLength * this.maxChunkSize);
 		this.fullDataBlocks[pointerIndex] = data;
 		return data;
 	}

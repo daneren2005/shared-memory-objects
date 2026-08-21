@@ -5,7 +5,7 @@ import { getPointer } from './utils/pointer';
 enum VALUE_TYPE {
 	UNDEFINED,
 	NUMBER,
-	STRING
+	STRING,
 }
 
 // Be able to serialize a simple object into memory and re-create the object in another thread

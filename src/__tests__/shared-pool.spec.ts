@@ -5,13 +5,13 @@ describe('SharedPool', () => {
 	let memory: MemoryHeap;
 	beforeEach(() => {
 		memory = new MemoryHeap({
-			bufferSize: 1024 * 16
+			bufferSize: 1024 * 16,
 		});
 	});
 
 	it('insert', () => {
 		let vector = new SharedPool(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		expect(vector.push(10)).toEqual(0);
@@ -34,7 +34,7 @@ describe('SharedPool', () => {
 	it('continually grows memory as needed', () => {
 		let vector = new SharedPool(memory, {
 			type: Uint32Array,
-			maxChunkSize: 100
+			maxChunkSize: 100,
 		});
 
 		const expectedValues = [];
@@ -56,7 +56,7 @@ describe('SharedPool', () => {
 		// maxChunkSize 1 means one chunk per element, so 200 pushes span spine segments 0 (32), 1 (64) and 2 (128)
 		let vector = new SharedPool(memory, {
 			type: Uint32Array,
-			maxChunkSize: 1
+			maxChunkSize: 1,
 		});
 
 		const expectedValues = [];
@@ -122,7 +122,7 @@ describe('SharedPool', () => {
 	it('with dataLength: 3', () => {
 		let vector = new SharedPool(memory, {
 			type: Uint32Array,
-			dataLength: 3
+			dataLength: 3,
 		});
 
 		vector.push(10);
@@ -133,7 +133,7 @@ describe('SharedPool', () => {
 		expect(flat(vector)).toEqual([
 			10, 0, 0,
 			52, 32, 6,
-			40, 41, 42
+			40, 41, 42,
 		]);
 		expect([...vector.at(0)]).toEqual([10, 0, 0]);
 		expect([...vector.at(1)]).toEqual([52, 32, 6]);
@@ -147,7 +147,7 @@ describe('SharedPool', () => {
 		expect(vector.length).toEqual(2);
 		expect(flat(vector)).toEqual([
 			52, 32, 6,
-			40, 41, 42
+			40, 41, 42,
 		]);
 		// Indexes are stable and do not change
 		expect([...vector.at(1)]).toEqual([52, 32, 6]);
@@ -157,7 +157,7 @@ describe('SharedPool', () => {
 
 	it('float32', () => {
 		let vector = new SharedPool(memory, {
-			type: Float32Array
+			type: Float32Array,
 		});
 
 		vector.push(10.5);
@@ -178,7 +178,7 @@ describe('SharedPool', () => {
 	it('float64', () => {
 		const startMemory = memory.currentUsed;
 		let vector = new SharedPool(memory, {
-			type: Float64Array
+			type: Float64Array,
 		});
 		expect(vector.byteMultipler).toEqual(2);
 		let cloneVector = new SharedPool(memory, vector.getSharedMemory());
@@ -186,7 +186,7 @@ describe('SharedPool', () => {
 
 		// Float64 should be allocating more than normal 32bit ones
 		let afterFloat64Memory = memory.currentUsed;
-		new SharedPool(memory);
+		void new SharedPool(memory);
 		expect(memory.currentUsed - afterFloat64Memory).toBeLessThan(afterFloat64Memory - startMemory);
 
 		vector.push(10.5);
@@ -218,7 +218,7 @@ describe('SharedPool', () => {
 	it('can work from memory', () => {
 		let mainVector = new SharedPool(memory, {
 			type: Uint32Array,
-			dataLength: 3
+			dataLength: 3,
 		});
 		let cloneVector = new SharedPool(memory, mainVector.getSharedMemory());
 
@@ -230,13 +230,13 @@ describe('SharedPool', () => {
 		expect(flat(mainVector)).toEqual([
 			10, 0, 0,
 			52, 32, 6,
-			40, 41, 42
+			40, 41, 42,
 		]);
 		expect(cloneVector.length).toEqual(3);
 		expect(flat(cloneVector)).toEqual([
 			10, 0, 0,
 			52, 32, 6,
-			40, 41, 42
+			40, 41, 42,
 		]);
 
 		// Make sure growing works
@@ -253,7 +253,7 @@ describe('SharedPool', () => {
 	it('free', () => {
 		let startMemory = memory.currentUsed;
 		let vector = new SharedPool(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		for(let i = 0; i < 1_000; i++) {
@@ -266,7 +266,7 @@ describe('SharedPool', () => {
 
 	it('clear', () => {
 		let vector = new SharedPool(memory, {
-			type: Uint32Array
+			type: Uint32Array,
 		});
 
 		vector.push(10);

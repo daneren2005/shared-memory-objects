@@ -30,7 +30,7 @@ export function replaceRawPointer(data: Uint32Array, index: number, newPointer: 
 export function getPointer(value: number) {
 	return {
 		bufferPosition: value & 0b00000000000000000000111111111111,
-		bufferByteOffset: value >>> POSITION_BIT_COUNT
+		bufferByteOffset: value >>> POSITION_BIT_COUNT,
 	};
 }
 export function createPointer(bufferPosition: number, bufferByteOffset: number) {

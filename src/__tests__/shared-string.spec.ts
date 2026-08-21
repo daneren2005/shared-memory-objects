@@ -13,7 +13,7 @@ describe('SharedString', () => {
 		let memory = new MemoryHeap();
 		let string = new SharedString(memory, 'Teǭst');
 
-		expect(string.value).toEqual('Teǭst');	
+		expect(string.value).toEqual('Teǭst');
 	});
 
 	it('can initialize from memory without the string allocated yet', () => {
@@ -21,7 +21,7 @@ describe('SharedString', () => {
 		let allocatedMemory = memory.allocUI32(SharedString.ALLOCATE_COUNT);
 		let string = new SharedString(memory, {
 			...allocatedMemory.getSharedMemory(),
-			value: 'Test'
+			value: 'Test',
 		});
 
 		expect(string.value).toEqual('Test');

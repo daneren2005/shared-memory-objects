@@ -57,14 +57,14 @@ export default class SharedMap<K extends string | number> {
 		if(pointer.bufferByteOffset === 0) {
 			// Initialize a list here
 			list = new SharedList(this.memory, {
-				dataLength: 2
+				dataLength: 2,
 			});
 
 			let listMemory = list.getSharedMemory();
 			storePointer(hashMemory.data, hashKey, listMemory.firstBlock.bufferPosition, listMemory.firstBlock.bufferByteOffset);
 		} else {
 			list = new SharedList(this.memory, {
-				firstBlock: pointer
+				firstBlock: pointer,
 			});
 		}
 
@@ -88,7 +88,7 @@ export default class SharedMap<K extends string | number> {
 		}
 
 		let list = new SharedList(this.memory, {
-			firstBlock: pointer
+			firstBlock: pointer,
 		});
 
 		for(let { data } of list) {
@@ -109,7 +109,7 @@ export default class SharedMap<K extends string | number> {
 		}
 
 		let list = new SharedList(this.memory, {
-			firstBlock: pointer
+			firstBlock: pointer,
 		});
 
 		for(let { data } of list) {
@@ -131,7 +131,7 @@ export default class SharedMap<K extends string | number> {
 		}
 
 		let list = new SharedList(this.memory, {
-			firstBlock: pointer
+			firstBlock: pointer,
 		});
 
 		for(let { data, deleteCurrent } of list) {
@@ -160,7 +160,7 @@ export default class SharedMap<K extends string | number> {
 			}
 
 			let list = new SharedList(this.memory, {
-				firstBlock: pointer
+				firstBlock: pointer,
 			});
 			for(let { data } of list) {
 				this.setHashKey(newHashMemory, newMaxHash, data[0], data[1]);
@@ -190,7 +190,7 @@ export default class SharedMap<K extends string | number> {
 			}
 
 			let list = new SharedList(this.memory, {
-				firstBlock: pointer
+				firstBlock: pointer,
 			});
 			list.free();
 		}
@@ -201,7 +201,7 @@ export default class SharedMap<K extends string | number> {
 
 	getSharedMemory(): SharedMapMemory {
 		return {
-			firstBlock: this.pointerMemory.getSharedMemory()
+			firstBlock: this.pointerMemory.getSharedMemory(),
 		};
 	}
 }
@@ -214,7 +214,7 @@ function get32BitHash<K extends string | number>(key: K): number {
 	if(typeof key === 'number') {
 		return key;
 	} else if(typeof key === 'string') {
-		return hashString(key as string);
+		return hashString(key);
 	} else {
 		return key;
 	}

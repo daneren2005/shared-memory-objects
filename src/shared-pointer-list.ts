@@ -36,7 +36,7 @@ export default abstract class SharedPointerList<T extends PointerItem> implement
 			let { bufferPosition, bufferByteOffset } = loadPointer(pointerData, 0);
 			let allocatedMemory = new AllocatedMemory(this.memory, {
 				bufferPosition,
-				bufferByteOffset
+				bufferByteOffset,
 			});
 			yield this.createItem(allocatedMemory);
 		}
@@ -53,6 +53,8 @@ export default abstract class SharedPointerList<T extends PointerItem> implement
 				return value;
 			}
 		}
+
+		return undefined;
 	}
 
 	getSharedMemory() {

@@ -1,6 +1,10 @@
 import MemoryHeap from '../memory-heap';
 import SharedMap from '../shared-map';
 
+function insertRandom(map: SharedMap<string>) {
+	map.set(`${map.length + 1}`, Math.random() * 1_000_000);
+}
+
 describe('SharedMap', () => {
 	let memory: MemoryHeap;
 	beforeEach(() => {
@@ -109,10 +113,6 @@ describe('SharedMap', () => {
 			map.free();
 			expect(memory.currentUsed).toEqual(startMemory);
 		});
-
-		function insertRandom(map: SharedMap<string>) {
-			map.set(`${map.length + 1}`, Math.random() * 1_000_000);
-		}
 	});
 
 	describe('SharedMap<number>', () => {

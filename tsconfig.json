@@ -1,14 +1,29 @@
 {
-	"files": [],
-	"references": [
-		{
-			"path": "./tsconfig.node.json"
-		},
-		{
-			"path": "./tsconfig.app.json"
-		},
-		{
-			"path": "./tsconfig.vitest.json"
-		}
+	"compilerOptions": {
+		"target": "esnext",
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+		"strict": true,
+		"declaration": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"sourceMap": true,
+		"outDir": "./dist",
+		"rootDir": ".",
+		"lib": [
+			"esnext",
+			"dom",
+			"dom.iterable"
+		],
+		"types": [
+			"vitest/globals",
+			"node"
+		]
+	},
+	"include": [
+		"src/**/*.ts",
+		"*.config.ts"
 	]
 }
