@@ -50,6 +50,9 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 	private growLock: Int32Array;
 	readonly maxLength: number;
 
+	// False when firstBlock is a slice of another structure's memory (e.g. inlined in SharedPool); that owner frees it
+	private ownsFirstBlock: boolean;
+
 	private cachedSegments: T[] = [];
 	// Parallel to cachedSegments: the per-slot publish sequences for each slot of that segment. Populated together with
 	// the data view in getSegment, so whenever cachedSegments[i] is set cachedSequences[i] is too.
@@ -90,36 +93,30 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 		return this.firstBlock.pointer;
 	}
 
-	constructor(memory: MemoryHeap, config?: SharedStackConfig<T> | SharedStackMemory) {
+	constructor(memory: MemoryHeap, config?: SharedStackConfig<T> | SharedStackMemory | SharedStackMemory & SharedStackConfig<T>) {
 		this.memory = memory;
 
 		if(config && 'firstBlock' in config) {
-			this.firstBlock = new AllocatedMemory(memory, config.firstBlock);
+			// An AllocatedMemory instance is a caller-reserved slice (e.g. inlined in SharedPool); a plain pointer is the
+			// serialized clone path. Taking the instance directly keeps us off the pointer-resolving construction branch.
+			this.firstBlock = config.firstBlock instanceof AllocatedMemory ? config.firstBlock : new AllocatedMemory(memory, config.firstBlock);
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
+
+			// Memory passed together with config means the caller reserved the firstBlock slot for us to initialize in place
+			if('type' in config || 'baseSegmentLength' in config || 'segmentCount' in config) {
+				this.initialize(config);
+				this.ownsFirstBlock = false;
+			} else {
+				this.ownsFirstBlock = true;
+			}
 		} else {
 			let maxSegments = config?.segmentCount ?? DEFAULT_MAX_SEGMENTS;
 
 			this.firstBlock = memory.allocUI32(SharedStack.BASE_ALLOCATE_COUNT + maxSegments);
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
+			this.ownsFirstBlock = true;
 
-			let baseSegmentLength = config?.baseSegmentLength ?? DEFAULT_BASE_SEGMENT_LENGTH;
-			// Each segment block holds the data slots followed by an equal-length region of publish sequences
-			let firstSegmentBlock = memory.allocUI32(baseSegmentLength * 2);
-			storePointer(this.firstBlock.data, SEGMENT_START_INDEX, firstSegmentBlock.bufferPosition, firstSegmentBlock.bufferByteOffset);
-			this.baseSegmentLength = baseSegmentLength;
-			this.maxSegments = maxSegments;
-			this.segmentCount = 1;
-
-			const type = config?.type ?? Uint32Array;
-			if(type === Uint32Array) {
-				this.type = TYPE.uint32;
-			// @ts-expect-error
-			} else if(type === Int32Array) {
-				this.type = TYPE.int32;
-			// @ts-expect-error
-			} else if(type === Float32Array) {
-				this.type = TYPE.float32;
-			}
+			this.initialize(config);
 		}
 
 		this.growLock = new Int32Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + GROW_LOCK_INDEX * Uint32Array.BYTES_PER_ELEMENT, 1);
@@ -128,6 +125,27 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 		if(this.maxLength > MAX_COUNT) {
 			// The length word reserves LEN_BITS for the count and the rest for the ABA version tag
 			throw new Error(`SharedStack maxLength ${this.maxLength} exceeds the ${MAX_COUNT} the versioned length counter can address`);
+		}
+	}
+
+	private initialize(config?: SharedStackConfig<T>) {
+		let baseSegmentLength = config?.baseSegmentLength ?? DEFAULT_BASE_SEGMENT_LENGTH;
+		// Each segment block holds the data slots followed by an equal-length region of publish sequences
+		let firstSegmentBlock = this.memory.allocUI32(baseSegmentLength * 2);
+		storePointer(this.firstBlock.data, SEGMENT_START_INDEX, firstSegmentBlock.bufferPosition, firstSegmentBlock.bufferByteOffset);
+		this.baseSegmentLength = baseSegmentLength;
+		this.maxSegments = config?.segmentCount ?? DEFAULT_MAX_SEGMENTS;
+		this.segmentCount = 1;
+
+		const type = config?.type ?? Uint32Array;
+		if(type === Uint32Array) {
+			this.type = TYPE.uint32;
+		// @ts-expect-error
+		} else if(type === Int32Array) {
+			this.type = TYPE.int32;
+		// @ts-expect-error
+		} else if(type === Float32Array) {
+			this.type = TYPE.float32;
 		}
 	}
 
@@ -307,7 +325,9 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 			let rawData = new AllocatedMemory(this.memory, pointer);
 			rawData.free();
 		}
-		this.firstBlock.free();
+		if(this.ownsFirstBlock) {
+			this.firstBlock.free();
+		}
 	}
 
 	getSharedMemory(): SharedStackMemory {
@@ -324,7 +344,7 @@ interface SharedStackConfig<T extends Uint32Array | Int32Array | Float32Array> {
 	segmentCount?: number
 }
 interface SharedStackMemory {
-	firstBlock: SharedAllocatedMemory
+	firstBlock: SharedAllocatedMemory | AllocatedMemory
 }
 
 export type { SharedStackConfig, SharedStackMemory };

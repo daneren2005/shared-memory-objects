@@ -79,6 +79,21 @@ describe('SharedStack', () => {
 		expect(stack.at(2)).toEqual(4.5);
 	});
 
+	it('initializes with firstBlock', () => {
+		const hostBlock = memory.allocUI32(SharedStack.DEFAULT_ALLOCATE_COUNT * 2);
+		const stack = new SharedStack(memory, {
+			type: Float32Array,
+			firstBlock: {
+				bufferPosition: hostBlock.bufferPosition,
+				bufferByteOffset: hostBlock.bufferByteOffset + SharedStack.DEFAULT_ALLOCATE_COUNT * Uint32Array.BYTES_PER_ELEMENT,
+			},
+		});
+
+		expect(stack.push(99)).toEqual(0);
+		expect(stack.push(42)).toEqual(1);
+		expect(flat(stack)).toEqual([99, 42]);
+	});
+
 	it('can work from memory', () => {
 		let mainVector = new SharedStack(memory, {
 			type: Uint32Array,
@@ -163,6 +178,20 @@ describe('SharedStack', () => {
 		}
 
 		stack.free();
+		expect(memory.currentUsed).toEqual(startMemory);
+	});
+	it('free from memory', () => {
+		let startMemory = memory.currentUsed;
+		let stack = new SharedStack(memory, {
+			type: Uint32Array,
+		});
+
+		for(let i = 0; i < 1_000; i++) {
+			stack.push(i);
+		}
+
+		let cloneStack = new SharedStack(memory, stack.getSharedMemory());
+		cloneStack.free();
 		expect(memory.currentUsed).toEqual(startMemory);
 	});
 

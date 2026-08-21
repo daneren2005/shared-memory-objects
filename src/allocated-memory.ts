@@ -52,6 +52,16 @@ export default class AllocatedMemory {
 
 		return new type(this.data.buffer, this.data.byteOffset + offset * type.BYTES_PER_ELEMENT, length);
 	}
+	// A child AllocatedMemory over a slice of this block, sharing the same buffer. Built through the {data, buffer} path
+	// (same as a fresh allocUI32) so callers stay on the cheap, monomorphic construction branch instead of re-resolving a
+	// pointer. Used to inline sub-structures (e.g. SharedPool's stacks) inside one contiguous allocation.
+	getSubAllocation(offset: number, length: number): AllocatedMemory {
+		return new AllocatedMemory(this.memory, {
+			data: new Uint32Array(this.data.buffer, this.bufferByteOffset + offset * Uint32Array.BYTES_PER_ELEMENT, length),
+			buffer: this.buffer,
+		});
+	}
+
 	getArrayMemory(offset: number, length: number): SharedAllocatedMemory {
 		if(import.meta.env.MODE === 'development') {
 			if(offset + length > this.data.length) {
