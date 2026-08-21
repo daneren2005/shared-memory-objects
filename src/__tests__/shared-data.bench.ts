@@ -5,6 +5,7 @@ import SharedMap from '../shared-map';
 import SharedVector from '../shared-vector';
 import SharedPool from '../shared-pool';
 import LocalPool from '../local-pool';
+import SharedStack from '../shared-stack';
 
 const ITERATE_COUNT = 10_000;
 describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
@@ -200,7 +201,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
 			list.insert(Math.random() * 1_000_000);
 		}
 	});
-	bench('shared map', () => {
+	bench.skip('shared map', () => {
 		let memory = new MemoryHeap();
 		let list = new SharedMap<number>(memory);
 
@@ -221,6 +222,14 @@ describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
 		let list = new SharedVector(memory, {
 			bufferLength: INSERT_COUNT + 2,
 		});
+
+		for(let i = 0; i < INSERT_COUNT; i++) {
+			list.push(Math.random() * 1_000_000);
+		}
+	});
+	bench('shared stack', () => {
+		let memory = new MemoryHeap();
+		let list = new SharedStack(memory);
 
 		for(let i = 0; i < INSERT_COUNT; i++) {
 			list.push(Math.random() * 1_000_000);
@@ -306,6 +315,44 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes end element`, () => {
 				sharedVector = new SharedVector(memory);
 				for(let i = 0; i < LOCAL_INSERT_COUNT; i++) {
 					sharedVector.push(Math.random() * 1_000_000);
+				}
+			};
+		},
+	});
+
+	let sharedStack: SharedStack;
+	bench('shared stack', () => {
+		for(let i = 0; i < DELETE_COUNT; i++) {
+			sharedStack.pop();
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 16,
+				});
+				sharedStack = new SharedStack(memory);
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					sharedStack.push(Math.random() * 1_000_000);
+				}
+			};
+		},
+	});
+
+	let sharedPool: SharedPool;
+	bench('shared pool', () => {
+		for(let i = 0; i < DELETE_COUNT; i++) {
+			sharedPool.deleteIndex(INSERT_COUNT - 1 - i);
+		}
+	}, {
+		setup: (task) => {
+			task.opts.beforeEach = () => {
+				let memory = new MemoryHeap({
+					bufferSize: 1024 * 16,
+				});
+				sharedPool = new SharedPool(memory);
+				for(let i = 0; i < INSERT_COUNT; i++) {
+					sharedPool.push(Math.random() * 1_000_000);
 				}
 			};
 		},

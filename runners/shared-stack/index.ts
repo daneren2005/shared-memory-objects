@@ -1,5 +1,5 @@
 import MemoryHeap from '../../src/memory-heap';
-import SharedPool from '../../src/shared-pool';
+import SharedStack from '../../src/shared-stack';
 import { attachWorkerLogging, captureGlobalErrors, log, warn } from '../logger';
 import prettyMemory from '../pretty-memory';
 import TestWorker from './worker?worker';
@@ -9,10 +9,7 @@ captureGlobalErrors();
 const heap = new MemoryHeap({
 	bufferSize: 1024 * 1024,
 });
-// Small maxChunkSize so we constantly cross chunk boundaries and hammer the buffer-growth path
-const pool = new SharedPool(heap, {
-	maxChunkSize: 100,
-});
+const stack = new SharedStack(heap);
 
 const workers: Array<Worker> = [];
 let workersDone = 0;
@@ -47,7 +44,8 @@ workerValues.forEach((value, index) => {
 	let worker = new TestWorker();
 	worker.postMessage({
 		heap: heap.getSharedMemory(),
-		pool: pool.getSharedMemory(),
+		stack: stack.getSharedMemory(),
+		allValues: workerValues,
 		workerNumber: index + 1,
 	});
 
@@ -65,7 +63,7 @@ workerValues.forEach((value, index) => {
 let startTime = 0;
 // Give workers a moment to finish initializing
 window.setTimeout(() => {
-	log('running pool operations');
+	log('running stack operations');
 	startTime = performance.now();
 	workerValues.forEach((value, index) => {
 		workers[index].postMessage({
@@ -77,12 +75,26 @@ window.setTimeout(() => {
 
 function checkIfDone() {
 	if(workersDone >= workers.length) {
-		log(`finished pool operations in ${Math.round(performance.now() - startTime)}ms`);
+		log(`finished stack operations in ${Math.round(performance.now() - startTime)}ms`);
 
-		if(pool.length === totalExpected) {
-			log(`all workers done - pool length ${pool.length} matches expected ${totalExpected}`);
+		if(stack.length === totalExpected) {
+			log(`all workers done - stack length ${stack.length} matches expected ${totalExpected}`);
 		} else {
-			warn(`all workers done - pool length ${pool.length} does NOT match expected ${totalExpected}`);
+			warn(`all workers done - stack length ${stack.length} does NOT match expected ${totalExpected}`);
+		}
+
+		// Every value still on the stack must be one a worker actually pushed - catches torn writes across segments
+		let validValues = new Set(workerValues);
+		let invalid = [];
+		for(let data of stack) {
+			if(!validValues.has(data)) {
+				invalid.push(data);
+			}
+		}
+		if(invalid.length) {
+			warn(`stack holds ${invalid.join(', ')} values that were never pushed`);
+		} else {
+			log(`all ${stack.length} values remaining on the stack are valid`);
 		}
 		log(`memory: ${prettyMemory(heap)}`);
 

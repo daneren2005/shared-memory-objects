@@ -3,6 +3,7 @@ A library to try to make making a multi-threaded game in Javascript possible.  T
 
 A demo can be found at https://daneren2005.github.io/ecs-sharedarraybuffer-playground/#/shared-memory-objects  
 The code is at https://github.com/daneren2005/ecs-sharedarraybuffer-playground/tree/dev/src/shared-memory-objects
+This project is used as a base for an ECS framework at github.com/daneren2005/shared-memory-ecs
 
 ## Basics
 The core of this package is the MemoryHeap.  You should usually just have a single heap that is shared between all of your different threads.  Each heap can have multiple MemoryBuffers.  By default each buffer is only 8KB but it can be configured up to 1MB, and you can have up to 4k buffers for a total of 4GB.  When you allocate memory, if there is not enough space it will allocate another buffers automatically.  When allocating memory, you will get a AllocatedMemory object that is a wrapper around the allocated memory by calling `heap.allocUI32({count of 32 bit numbers})`.  By default AllocatedMemory is backed by a Uint32Array but you can get any type of array from `AllocatedMemory.getArray(Int32Array);`.
@@ -61,12 +62,13 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 - SharedMap - growable hash map
 - LocalPool - stable indexed data with a recycled pool that can only be pushed/deleted from main thread but can pass TypedArrays to other threads to operate on
 - SharedPool - stable indexed data with a recycled pool and maximum internal array sizes
+- SharedStack - push/pop with exponentially growing internal segments.
 - SharedString
 - ConstantString - an immutable SharedString: the value is written once and never changes, so it drops the lock word and all of SharedString's read/write locking
 
 ## Thread Safety
 - Memory allocations is thread safe as long as it does not need to create a new buffer.  Right now that can only be done from the main thread.
-- SharedPool is thread safe
+- SharedPool and SharedStack are thread safe
 - SharedList, SharedVector, and SharedMap are *not* thread safe.
 - SharedString is thread safe with a lock on read/write with a cached version of the string so it doesn't need to lock after the first read unless the string has changed.
 - ConstantString is safe to read from any thread without a lock precisely because it is never written after construction
@@ -74,7 +76,7 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 ## TODO
 - Make creating new buffers from allocations possible from multiple threads
 - Make data structures thread safe
-- Add basic thread safe object example
+- Make map structure that isn't so slow as to be useless
 
 ## Performance
 The tl;dr is that none of these data structures are close to what you can get by just using native data structures, but I wasn't expecting them to be with their overhead.
