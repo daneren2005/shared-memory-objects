@@ -4,7 +4,7 @@ import { serializeObjectToMemory, createObjectFromMemory, createObjectFromPointe
 describe('SerializeObject', () => {
 	let heap: MemoryHeap;
 	beforeEach(() => {
-		heap = new MemoryHeap();
+		heap = new MemoryHeap({ bufferSize: 1024 * 16 });
 	});
 
 	it('simple', () => {

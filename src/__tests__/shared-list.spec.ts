@@ -6,7 +6,7 @@ import { getPointer } from '../utils/pointer';
 describe('SharedList', () => {
 	let memory: MemoryHeap;
 	beforeEach(() => {
-		memory = new MemoryHeap();
+		memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 	});
 
 	it('can insert items', () => {

@@ -20,7 +20,7 @@ describe('MemoryHeap', () => {
 		expect(memory.totalAllocated).toEqual(400);
 	});
 	it('auto grows memory with autoGrowSize: 80', () => {
-		let memory = new MemoryHeap({ autoGrowSize: 80 });
+		let memory = new MemoryHeap({ autoGrowSize: 80, bufferSize: 8_192 });
 
 		memory.allocUI32(1_500);
 		expect(memory.buffers.length).toEqual(1);

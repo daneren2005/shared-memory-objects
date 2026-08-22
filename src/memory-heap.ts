@@ -2,7 +2,7 @@ import AllocatedMemory, { type SharedAllocatedMemory } from './allocated-memory'
 import { MAX_BYTE_OFFSET_LENGTH, MAX_POSITION_LENGTH } from './utils/pointer';
 import MemoryBuffer from './memory-buffer';
 
-const DEFAULT_BUFFER_SIZE = 8_192;
+const DEFAULT_BUFFER_SIZE = MAX_BYTE_OFFSET_LENGTH;
 const BUFFER_SIZE_INDEX = 0;
 const BUFFER_COUNT_INDEX = 1;
 const BUFFER_AUTO_GROW_INDEX = 2;

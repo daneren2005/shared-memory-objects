@@ -8,7 +8,7 @@ function insertRandom(map: SharedMap<string>) {
 describe('SharedMap', () => {
 	let memory: MemoryHeap;
 	beforeEach(() => {
-		memory = new MemoryHeap();
+		memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 	});
 
 	describe('SharedMap<string>', () => {

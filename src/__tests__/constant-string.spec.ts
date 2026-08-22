@@ -4,28 +4,28 @@ import { getPointer } from '../utils/pointer';
 
 describe('ConstantString', () => {
 	it('can create', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let string = new ConstantString(memory, 'Test');
 
 		expect(string.value).toEqual('Test');
 	});
 
 	it('utf16 characters work', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let string = new ConstantString(memory, 'Teǭst');
 
 		expect(string.value).toEqual('Teǭst');
 	});
 
 	it('can set to empty string', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let string = new ConstantString(memory, '');
 
 		expect(string.value).toEqual('');
 	});
 
 	it('another view over the same memory reads the same value without re-allocating', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let string = new ConstantString(memory, 'Space Ship');
 		let usedAfterCreate = memory.currentUsed;
 
@@ -36,7 +36,7 @@ describe('ConstantString', () => {
 	});
 
 	it('can be resolved from just its pointer', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let string = new ConstantString(memory, 'Miner');
 
 		// getPointer(pointer) is what a worker does with the value stored in a component block.
@@ -64,7 +64,7 @@ describe('ConstantString', () => {
 	});
 
 	it('free releases both the header and the character memory', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let startMemory = memory.currentUsed;
 		let string = new ConstantString(memory, 'Tests');
 		string.free();

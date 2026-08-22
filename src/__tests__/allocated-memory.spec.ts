@@ -4,7 +4,7 @@ const START_BYTE = 64;
 describe('AllocatedMemory', () => {
 	describe('getArray', () => {
 		it('Int32Array', () => {
-			let heap = new MemoryHeap();
+			let heap = new MemoryHeap({ bufferSize: 1024 * 16 });
 			let memory = heap.allocUI32(5);
 
 			expect(memory.getArray(Int32Array, 0, 5).length).toEqual(5);
@@ -16,7 +16,7 @@ describe('AllocatedMemory', () => {
 		});
 
 		it('Int16Array', () => {
-			let heap = new MemoryHeap();
+			let heap = new MemoryHeap({ bufferSize: 1024 * 16 });
 			let memory = heap.allocUI32(5);
 
 			expect(memory.getArray(Int16Array, 0, 10).length).toEqual(10);

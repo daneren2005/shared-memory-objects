@@ -3,21 +3,21 @@ import SharedString from '../shared-string';
 
 describe('SharedString', () => {
 	it('can create', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let string = new SharedString(memory, 'Test');
 
 		expect(string.value).toEqual('Test');
 	});
 
 	it('utf16 characters work', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let string = new SharedString(memory, 'Teǭst');
 
 		expect(string.value).toEqual('Teǭst');
 	});
 
 	it('can initialize from memory without the string allocated yet', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let allocatedMemory = memory.allocUI32(SharedString.ALLOCATE_COUNT);
 		let string = new SharedString(memory, {
 			...allocatedMemory.getSharedMemory(),
@@ -27,7 +27,7 @@ describe('SharedString', () => {
 		expect(string.value).toEqual('Test');
 	});
 	it('can work from uninitialized memory', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let allocatedMemory = memory.allocUI32(SharedString.ALLOCATE_COUNT);
 		let string = new SharedString(memory, allocatedMemory.getSharedMemory());
 
@@ -35,7 +35,7 @@ describe('SharedString', () => {
 	});
 
 	it('can be set to new memory strings', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let string = new SharedString(memory, 'Tests again22222222222222222222');
 		let startMemory = memory.currentUsed;
 		let copy = new SharedString(memory, string.getSharedMemory());
@@ -57,7 +57,7 @@ describe('SharedString', () => {
 	});
 
 	it('can set to empty string', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let string = new SharedString(memory, '');
 
 		expect(string.value).toEqual('');
@@ -82,7 +82,7 @@ describe('SharedString', () => {
 	});
 
 	it('can be updated back and forth between ascii and utf16 without leaking', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let startMemory = memory.currentUsed;
 		let string = new SharedString(memory, 'ascii value here');
 
@@ -96,7 +96,7 @@ describe('SharedString', () => {
 	});
 
 	it('free', () => {
-		let memory = new MemoryHeap();
+		let memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 		let startMemory = memory.currentUsed;
 		let string = new SharedString(memory, 'Tests');
 		// No memory leak from changing values

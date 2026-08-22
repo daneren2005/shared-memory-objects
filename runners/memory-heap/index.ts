@@ -5,9 +5,7 @@ import TestWorker from './worker?worker';
 
 captureGlobalErrors();
 
-const memory = new MemoryHeap({
-	bufferSize: 1024 * 10,
-});
+const memory = new MemoryHeap();
 
 const workers: Array<Worker> = [];
 let workersDone = 0;

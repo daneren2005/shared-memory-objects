@@ -6,9 +6,7 @@ import TestWorker from './worker?worker';
 
 captureGlobalErrors();
 
-const heap = new MemoryHeap({
-	bufferSize: 1024 * 1024,
-});
+const heap = new MemoryHeap();
 const stack = new SharedStack(heap);
 
 const workers: Array<Worker> = [];

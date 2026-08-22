@@ -6,9 +6,7 @@ import TestWorker from './worker?worker';
 
 captureGlobalErrors();
 
-const heap = new MemoryHeap({
-	bufferSize: 1024 * 1024,
-});
+const heap = new MemoryHeap();
 // Small maxChunkSize so we constantly cross chunk boundaries and hammer the buffer-growth path
 const pool = new SharedPool(heap, {
 	maxChunkSize: 100,

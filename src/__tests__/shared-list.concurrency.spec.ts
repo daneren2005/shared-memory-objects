@@ -11,7 +11,7 @@ const TAIL_INDEX = 1;
 describe('SharedList concurrency windows', () => {
 	let memory: MemoryHeap;
 	beforeEach(() => {
-		memory = new MemoryHeap();
+		memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 	});
 
 	// Build a raw view over the list's first block (the sentinel) so we can simulate a half-finished enqueue

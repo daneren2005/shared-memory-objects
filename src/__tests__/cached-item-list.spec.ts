@@ -6,7 +6,7 @@ import SharedString from '../shared-string';
 describe('CachedItemList', () => {
 	let memory: MemoryHeap;
 	beforeEach(() => {
-		memory = new MemoryHeap();
+		memory = new MemoryHeap({ bufferSize: 1024 * 16 });
 	});
 
 	it('init', () => {
