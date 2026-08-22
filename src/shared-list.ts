@@ -2,7 +2,7 @@ import type { SharedAllocatedMemory } from './allocated-memory';
 import AllocatedMemory from './allocated-memory';
 import type { TypedArrayConstructor } from './interfaces/typed-array-constructor';
 import type MemoryHeap from './memory-heap';
-import { getPointer, loadPointer, loadRawPointer, replaceRawPointer, storePointer, storeRawPointer } from './utils/pointer';
+import { loadPointer, loadRawPointer, POSITION_BIT_COUNT, replaceRawPointer, storeRawPointer } from './utils/pointer';
 
 enum TYPE {
 	uint32,
@@ -10,21 +10,32 @@ enum TYPE {
 	float32,
 }
 
-// TODO: We need some sort of locking on insert/deletes!
+// Lock-free singly-linked list. firstBlock doubles as an immortal sentinel node whose next pointer (index 0) is the head.
+// insert appends with a Michael-Scott CAS enqueue; delete only tombstones a node (never unlinks/frees). Memory is
+// reclaimed exclusively by the quiescent compact()/clear()/free() passes. That deferral is what makes the CAS loops
+// safe without hazard pointers: a live node's address is never handed back to the allocator, so no append can ever
+// observe a recycled address (ABA) while another thread is mid-traversal.
 const FIRST_BLOCK_RECORD_KEEPING_COUNT = 4;
-const DATA_BLOCK_RECORD_KEEPING_COUNT = 1;
+const DATA_BLOCK_RECORD_KEEPING_COUNT = 2;
+const DATA_BLOCK_BYTE_OFFSET = DATA_BLOCK_RECORD_KEEPING_COUNT * Uint32Array.BYTES_PER_ELEMENT;
+const HEAD_INDEX = 0;
+const TAIL_INDEX = 1;
 const LENGTH_INDEX = 2;
+const NODE_NEXT_INDEX = 0;
+const NODE_DELETED_INDEX = 1;
+// A pointer packs the buffer position in its low bits and the byte offset in the high bits (see utils/pointer)
+const POSITION_MASK = (1 << POSITION_BIT_COUNT) - 1;
 export default class SharedList<T extends Uint32Array | Int32Array | Float32Array = Uint32Array> implements Iterable<SharedListIterable<T>> {
 	static readonly ALLOCATE_COUNT = FIRST_BLOCK_RECORD_KEEPING_COUNT;
 
 	private memory: MemoryHeap;
-	/* First block
+	/* First block (also the sentinel node - index 0 is its next pointer = list head)
 		32 index 0
-		uint16 0 - next buffer position
-		uint16 1 - next buffer index
+		uint16 0 - head buffer position    | sentinel.next
+		uint16 1 - head buffer index
 		32 index 1
-		uint16 2 - last buffer position
-		uint16 3 - last buffer index
+		uint16 2 - tail hint buffer position
+		uint16 3 - tail hint buffer index
 		32 index 2
 		uint32 4 - length
 		32 index 3
@@ -32,28 +43,32 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 		uint16 7 - data length (defaults to 1 number per data)
 	*/
 	/* Other blocks
-		32 index 0
-		uint16 0 - next buffer position
-		uint16 1 - next buffer index
-		32 index 1 => data
+		32 index 0 - next buffer pointer
+		32 index 1 - deleted flag (0 = live, 1 = tombstoned)
+		32 index 2 => data
 	*/
 	private firstBlock: AllocatedMemory;
 	private uint16Array: Uint16Array;
+	// type and dataLength are written once at init and never change, so cache them instead of atomic-loading per node
+	private cachedType: number;
+	private cachedDataLength: number;
+	// One full-buffer Uint32Array per buffer position, so traversal indexes shared memory directly instead of
+	// allocating a fresh view (and a getPointer object) for every node it touches
+	private bufferViews: Array<Uint32Array> = [];
 	onDelete?: (data: T) => void;
 
 	get length(): number {
 		return Atomics.load(this.firstBlock.data, LENGTH_INDEX);
 	}
-	
+
 	get type(): number {
-		return Atomics.load(this.uint16Array, 0);
+		return this.cachedType;
 	}
 	private set type(value: number) {
 		Atomics.store(this.uint16Array, 0, value);
 	}
 	get dataLength(): number {
-		// Can technically be initialized by passing memory without actually every being called - need to make sure dataLength is always at least one
-		return Math.max(1, Atomics.load(this.uint16Array, 1));
+		return this.cachedDataLength;
 	}
 	private set dataLength(value: number) {
 		Atomics.store(this.uint16Array, 1, value);
@@ -74,6 +89,9 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 			}
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + (LENGTH_INDEX + 1) * Uint32Array.BYTES_PER_ELEMENT, 2);
 
+			// Empty list: the tail hint points at the sentinel (firstBlock) so insert never special-cases the first node
+			storeRawPointer(this.firstBlock.data, TAIL_INDEX, this.firstBlock.pointer);
+
 			const type = config?.type ?? Uint32Array;
 			if(type === Uint32Array) {
 				this.type = TYPE.uint32;
@@ -86,6 +104,10 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 			}
 			this.dataLength = config?.dataLength ?? 1;
 		}
+
+		this.cachedType = Atomics.load(this.uint16Array, 0);
+		// dataLength defaults to at least one even when initialized from raw memory that was never explicitly set
+		this.cachedDataLength = Math.max(1, Atomics.load(this.uint16Array, 1));
 	}
 
 	insert(values: number | Array<number>) {
@@ -93,14 +115,14 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 			values = [values];
 		}
 
-		let dataLength = this.dataLength;
+		let dataLength = this.cachedDataLength;
 		if(values.length > dataLength) {
 			throw new Error(`Can't insert ${values.length} array into shared list of ${dataLength} dataLength`);
 		}
 		let newBlock = this.memory.allocUI32(DATA_BLOCK_RECORD_KEEPING_COUNT + dataLength);
-		let newData = this.getDataBlock(newBlock.data);
+		let newData = this.getDataBlock(newBlock.data.buffer, newBlock.data.byteOffset);
 		let newBlockPointer = newBlock.pointer;
-		
+
 		for(let i = 0; i < values.length; i++) {
 			if(newData instanceof Int32Array || newData instanceof Uint32Array) {
 				Atomics.store(newData, i, values[i]);
@@ -110,32 +132,45 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 			}
 		}
 
-		let lastBlockPointer;
-		let updateWorked = false;
-		while(!updateWorked) {
-			lastBlockPointer = loadRawPointer(this.firstBlock.data, 1);
-			updateWorked = replaceRawPointer(this.firstBlock.data, 1, newBlockPointer, lastBlockPointer);
+		// Michael-Scott enqueue: link the node onto tail.next BEFORE swinging the tail hint, so a committed node is never
+		// invisible to a concurrent traversal. The tail hint may lag by one node; enqueuers help advance it.
+		// eslint-disable-next-line no-constant-condition
+		while(true) {
+			let tailPointer = loadRawPointer(this.firstBlock.data, TAIL_INDEX);
+			let view = this.getBufferView(tailPointer & POSITION_MASK);
+			// Tail node lives in a buffer this thread hasn't synced yet - retry until it appears
+			if(!view) {
+				continue;
+			}
+			let tailNextIndex = ((tailPointer >>> POSITION_BIT_COUNT) >>> 2) + NODE_NEXT_INDEX;
+			let nextPointer = Atomics.load(view, tailNextIndex);
+
+			// Re-check the hint hasn't moved out from under us before acting on what we read
+			if(tailPointer !== loadRawPointer(this.firstBlock.data, TAIL_INDEX)) {
+				continue;
+			}
+
+			if(nextPointer === 0) {
+				if(Atomics.compareExchange(view, tailNextIndex, 0, newBlockPointer) === 0) {
+					// Linked. Try to swing the hint forward - failure is harmless, the next enqueuer will help.
+					replaceRawPointer(this.firstBlock.data, TAIL_INDEX, newBlockPointer, tailPointer);
+					break;
+				}
+			} else {
+				// Tail hint is lagging behind a linked node - help it catch up, then retry
+				replaceRawPointer(this.firstBlock.data, TAIL_INDEX, nextPointer, tailPointer);
+			}
 		}
 
-		if(lastBlockPointer) {
-			let { bufferPosition: lastBlockPosition, bufferByteOffset: lastBlockByteOffset } = getPointer(lastBlockPointer);
-			// TODO: How to handle referencing memory we don't have access to yet because buffer not synced from worker?
-			let lastBlock = new Uint32Array(this.memory.buffers[lastBlockPosition].buf, lastBlockByteOffset, 1);
-			storeRawPointer(lastBlock, 0, newBlockPointer);
-		} else {
-			// First item - store on first block
-			storeRawPointer(this.firstBlock.data, 0, newBlockPointer);
-		}
-		
-		// Always update new last buffer position and length
 		Atomics.add(this.firstBlock.data, LENGTH_INDEX, 1);
 	}
 
 	deleteMatch(callback: (values: T, index: number) => boolean): boolean {
 		for(let { data, index, deleteCurrent } of this) {
 			if(callback(data, index)) {
-				deleteCurrent();
-				return true;
+				if(deleteCurrent()) {
+					return true;
+				}
 			}
 		}
 
@@ -146,7 +181,16 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 			return false;
 		}
 
-		return this.deleteMatch((values, index) => index === deleteIndex);
+		// Compare on index only so the payload view is never materialized for an index-based delete
+		for(let item of this) {
+			if(item.index === deleteIndex) {
+				if(item.deleteCurrent()) {
+					return true;
+				}
+			}
+		}
+
+		return false;
 	}
 	deleteValue(deleteValues: number | Array<number>) {
 		if(typeof deleteValues === 'number') {
@@ -168,103 +212,131 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 		}
 	}
 
+	// Reclaims tombstoned nodes: physically unlinks and frees them. Not safe to run concurrently with insert/delete.
+	compact() {
+		let prevPointer = this.firstBlock.pointer;
+		let prevView = this.firstBlock.data;
+		let prevNextIndex = NODE_NEXT_INDEX;
+		let nextPointer = loadRawPointer(prevView, prevNextIndex);
+		while(nextPointer) {
+			let position = nextPointer & POSITION_MASK;
+			let memPool = this.memory.buffers[position];
+			if(!memPool) {
+				break;
+			}
+			let view = this.getBufferView(position)!;
+			let byteOffset = nextPointer >>> POSITION_BIT_COUNT;
+			let nodeIndex = byteOffset >>> 2;
+			let followingPointer = Atomics.load(view, nodeIndex + NODE_NEXT_INDEX);
+
+			if(Atomics.load(view, nodeIndex + NODE_DELETED_INDEX)) {
+				// Skip over the tombstone and free it. onDelete already fired when the node was logically deleted.
+				storeRawPointer(prevView, prevNextIndex, followingPointer);
+				memPool.free(byteOffset);
+			} else {
+				prevPointer = nextPointer;
+				prevView = view;
+				prevNextIndex = nodeIndex + NODE_NEXT_INDEX;
+			}
+
+			nextPointer = followingPointer;
+		}
+
+		// The last surviving node (or the sentinel when everything is gone) is the new tail
+		storeRawPointer(this.firstBlock.data, TAIL_INDEX, prevPointer);
+	}
+
 	clear() {
-		let firstBlockPointer, lastBlockPointer;
+		// Detach the whole chain, then free it. Not safe to run concurrently with insert/delete.
+		let firstBlockPointer;
 		let updateWorked = false;
 		while(!updateWorked) {
-			firstBlockPointer = loadRawPointer(this.firstBlock.data, 0);
-			lastBlockPointer = loadRawPointer(this.firstBlock.data, 1);
+			firstBlockPointer = loadRawPointer(this.firstBlock.data, HEAD_INDEX);
 			// Already cleared
-			if(!lastBlockPointer) {
+			if(!firstBlockPointer) {
 				return;
 			}
 
-			updateWorked = replaceRawPointer(this.firstBlock.data, 1, 0, lastBlockPointer);
+			updateWorked = replaceRawPointer(this.firstBlock.data, HEAD_INDEX, 0, firstBlockPointer);
 		}
-		
 		// Shouldn't be possible to hit: making Typescript happy
 		if(!firstBlockPointer) {
 			return;
 		}
 
-		// We only want to update the last block if this is ran before something new was inserted
-		replaceRawPointer(this.firstBlock.data, 0, 0, firstBlockPointer);
+		// Reset the tail hint back to the sentinel
+		storeRawPointer(this.firstBlock.data, TAIL_INDEX, this.firstBlock.pointer);
 
-		// Iterate through  inaccessible nodes and delete them
-		let deletedItems = 0;
+		let liveItems = 0;
 		let nextBlockPointer = firstBlockPointer;
 		while(nextBlockPointer) {
-			let { bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = getPointer(nextBlockPointer);
-			let memPool = this.memory.buffers[nextBlockPosition];
+			let position = nextBlockPointer & POSITION_MASK;
+			let memPool = this.memory.buffers[position];
 			// Short circuit iterations if we can't access memory
 			if(!memPool) {
 				break;
 			}
 
-			let blockRecord = new Uint32Array(memPool.buf, nextBlockByteOffset, 2);
-			nextBlockPointer = loadRawPointer(blockRecord, 0);
-			deletedItems++;
+			let view = this.getBufferView(position)!;
+			let byteOffset = nextBlockPointer >>> POSITION_BIT_COUNT;
+			let nodeIndex = byteOffset >>> 2;
+			nextBlockPointer = Atomics.load(view, nodeIndex + NODE_NEXT_INDEX);
 
-			if(this.onDelete) {
-				this.onDelete(this.getDataBlock(blockRecord));
+			if(!Atomics.load(view, nodeIndex + NODE_DELETED_INDEX)) {
+				liveItems++;
+				if(this.onDelete) {
+					this.onDelete(this.getDataBlock(view.buffer, byteOffset));
+				}
 			}
 
-			memPool.free(blockRecord.byteOffset);
+			memPool.free(byteOffset);
 		}
-		
-		// Subtract by however many we deleted so that a insert during this operation is accurate
-		Atomics.sub(this.firstBlock.data, LENGTH_INDEX, deletedItems);
+
+		// Only subtract the live nodes we detached so a concurrent insert's increment stays accurate
+		Atomics.sub(this.firstBlock.data, LENGTH_INDEX, liveItems);
 	}
 
 	*[Symbol.iterator]() {
 		let currentIndex = 0;
-		let { bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(this.firstBlock.data, 0);
-		let lastBlockData = this.firstBlock.data;
-		let lastBlockPosition = 0;
-		let lastBlockByteOffset = 0;
-		while(nextBlockByteOffset) {
-			let memPool = this.memory.buffers[nextBlockPosition];
+		let nextPointer = loadRawPointer(this.firstBlock.data, HEAD_INDEX);
+		while(nextPointer) {
+			let position = nextPointer & POSITION_MASK;
+			let view = this.getBufferView(position);
 			// Short circuit iterations if we can't access memory
-			if(!memPool) {
+			if(!view) {
 				return;
 			}
+			let byteOffset = nextPointer >>> POSITION_BIT_COUNT;
+			let nodeIndex = byteOffset >>> 2;
+			nextPointer = Atomics.load(view, nodeIndex + NODE_NEXT_INDEX);
 
-			let blockRecord = new Uint32Array(memPool.buf, nextBlockByteOffset, 2);
-			let blockData = this.getDataBlock(blockRecord);
+			// Skip tombstoned nodes - they stay linked until a quiescent compact()/clear()
+			if(Atomics.load(view, nodeIndex + NODE_DELETED_INDEX)) {
+				continue;
+			}
 
-			let currentBlockPosition = nextBlockPosition;
-			let currentBlockByteOffset = nextBlockByteOffset;
-			({ bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(blockRecord, 0));
-
-			let updateLastBlock = true;
+			let buffer = view.buffer;
+			let deletedIndex = nodeIndex + NODE_DELETED_INDEX;
+			// Plain object with an eager data view: V8 keeps this monomorphic and fast. A lazy `get data()` accessor is far
+			// slower to allocate than the payload view it would save, so pay for the view up front.
 			yield {
-				data: blockData,
+				data: this.getDataBlock(buffer, byteOffset),
 				index: currentIndex,
-				deleteCurrent: () => {
-					// Move previous index to point to one after
-					storePointer(lastBlockData, 0, nextBlockPosition, nextBlockByteOffset);
-
-					// If this is the last item, update last block to be previous location
-					if(!nextBlockByteOffset) {
-						storePointer(this.firstBlock.data, 1, lastBlockPosition, lastBlockByteOffset);
+				// Logical delete: tombstone the node and drop length. Returns false if another thread beat us to it.
+				deleteCurrent: (): boolean => {
+					if(Atomics.compareExchange(view, deletedIndex, 0, 1) === 0) {
+						Atomics.sub(this.firstBlock.data, LENGTH_INDEX, 1);
+						if(this.onDelete) {
+							this.onDelete(this.getDataBlock(buffer, byteOffset));
+						}
+						return true;
 					}
 
-					if(this.onDelete) {
-						this.onDelete(this.getDataBlock(blockRecord));
-					}
-
-					memPool.free(blockRecord.byteOffset);
-					Atomics.sub(this.firstBlock.data, LENGTH_INDEX, 1);
-					updateLastBlock = false;
+					return false;
 				},
 			};
 
-			if(updateLastBlock) {
-				lastBlockData = blockRecord;
-				lastBlockPosition = currentBlockPosition;
-				lastBlockByteOffset = currentBlockByteOffset;
-				currentIndex++;
-			}
+			currentIndex++;
 		}
 	}
 
@@ -280,33 +352,49 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 		};
 	}
 
-	private getDataBlock(memory: Uint32Array): T {
-		const startIndex = memory.byteOffset + DATA_BLOCK_RECORD_KEEPING_COUNT * memory.BYTES_PER_ELEMENT;
+	private getBufferView(position: number): Uint32Array | undefined {
+		let view = this.bufferViews[position];
+		if(view) {
+			return view;
+		}
 
-		switch(this.type) {
+		let buffer = this.memory.buffers[position];
+		if(!buffer) {
+			return undefined;
+		}
+
+		view = new Uint32Array(buffer.buf);
+		this.bufferViews[position] = view;
+		return view;
+	}
+
+	private getDataBlock(buffer: ArrayBufferLike, nodeByteOffset: number): T {
+		const startIndex = nodeByteOffset + DATA_BLOCK_BYTE_OFFSET;
+
+		switch(this.cachedType) {
 			case TYPE.int32:
-				return new Int32Array(memory.buffer, startIndex, this.dataLength) as T;
+				return new Int32Array(buffer, startIndex, this.cachedDataLength) as T;
 			case TYPE.uint32:
-				return new Uint32Array(memory.buffer, startIndex, this.dataLength) as T;
+				return new Uint32Array(buffer, startIndex, this.cachedDataLength) as T;
 			case TYPE.float32:
-				return new Float32Array(memory.buffer, startIndex, this.dataLength) as T;
+				return new Float32Array(buffer, startIndex, this.cachedDataLength) as T;
 			default:
-				throw new Error(`Unknown data block type ${this.type}`);
+				throw new Error(`Unknown data block type ${this.cachedType}`);
 		}
 	}
 
 	free() {
-		let { bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(this.firstBlock.data, 0);
+		let { bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(this.firstBlock.data, HEAD_INDEX);
 		while(nextBlockByteOffset) {
 			let allocatedMemory = new AllocatedMemory(this.memory, {
 				bufferPosition: nextBlockPosition,
 				bufferByteOffset: nextBlockByteOffset,
 			});
 
-			({ bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(allocatedMemory.data, 0));
+			({ bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(allocatedMemory.data, NODE_NEXT_INDEX));
 
-			if(this.onDelete) {
-				this.onDelete(this.getDataBlock(allocatedMemory.data));
+			if(this.onDelete && !Atomics.load(allocatedMemory.data, NODE_DELETED_INDEX)) {
+				this.onDelete(this.getDataBlock(allocatedMemory.data.buffer, allocatedMemory.data.byteOffset));
 			}
 
 			allocatedMemory.free();
@@ -328,7 +416,7 @@ interface SharedListMemory {
 interface SharedListIterable<T extends Uint32Array | Int32Array | Float32Array> {
 	data: T
 	index: number
-	deleteCurrent: () => void
+	deleteCurrent: () => boolean
 }
 
 export { type SharedListMemory };

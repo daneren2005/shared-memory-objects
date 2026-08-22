@@ -48,7 +48,14 @@ export default abstract class CachedItemList<T extends Item> implements Iterable
 	}
 	delete(item: T) {
 		this.cache.delete(item.pointer);
-		return this.list.deleteValue(item.pointer);
+		let deleted = this.list.deleteValue(item.pointer);
+		// This wrapper is single-threaded per instance, so reclaim the tombstoned node right away
+		this.list.compact();
+		return deleted;
+	}
+
+	compact() {
+		this.list.compact();
 	}
 
 	getByPointer(pointer: number): T | undefined {

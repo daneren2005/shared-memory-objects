@@ -38,6 +38,7 @@
     "release": "semantic-release",
     "start": "npm run dev",
     "test:bench": "vitest bench --run",
+    "test:stress": "npm run build && node scripts/stress-shared-list.mjs",
     "test:bench:watch": "vitest bench",
     "test:ui": "vitest --ui --api 9527",
     "test:unit": "vitest run",

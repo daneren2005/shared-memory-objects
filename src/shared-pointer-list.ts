@@ -26,7 +26,14 @@ export default abstract class SharedPointerList<T extends PointerItem> implement
 		this.list.insert(createPointer(item.memory.bufferPosition, item.memory.bufferByteOffset));
 	}
 	delete(item: T) {
-		return this.list.deleteValue(createPointer(item.memory.bufferPosition, item.memory.bufferByteOffset));
+		let deleted = this.list.deleteValue(createPointer(item.memory.bufferPosition, item.memory.bufferByteOffset));
+		// This wrapper is single-threaded per instance, so reclaim the tombstoned node right away
+		this.list.compact();
+		return deleted;
+	}
+
+	compact() {
+		this.list.compact();
 	}
 
 	*[Symbol.iterator]() {

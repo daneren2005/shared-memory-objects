@@ -74,7 +74,11 @@ export default class SharedMap<K extends string | number> {
 			inserted = false;
 		}
 		list.insert([fullHashKey, value]);
-		
+		// An overwrite leaves a tombstone behind - reclaim it so buckets don't grow on repeated updates
+		if(!inserted) {
+			list.compact();
+		}
+
 		return inserted;
 	}
 
@@ -134,16 +138,23 @@ export default class SharedMap<K extends string | number> {
 			firstBlock: pointer,
 		});
 
+		let deleted = false;
 		for(let { data, deleteCurrent } of list) {
 			if(data[0] === fullHashKey) {
 				deleteCurrent();
 
 				Atomics.sub(this.pointerMemory.data, 2, 1);
-				return true;
+				deleted = true;
+				break;
 			}
 		}
 
-		return false;
+		// compact only after iteration finishes - unlinking/freeing mid-iteration would corrupt the walk
+		if(deleted) {
+			list.compact();
+		}
+
+		return deleted;
 	}
 
 	private growHashTable() {

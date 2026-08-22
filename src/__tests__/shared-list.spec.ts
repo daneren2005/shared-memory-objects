@@ -33,8 +33,11 @@ describe('SharedList', () => {
 
 		list.deleteIndex(2);
 		expect(flat(list)).toEqual([5, 10, 8, 20]);
-		expect(memory.currentUsed).toBeLessThan(fullMemory);
+		// Deferred reclamation: the tombstoned node's memory is not freed until compact()
+		expect(memory.currentUsed).toEqual(fullMemory);
 		expect(list.length).toEqual(4);
+		list.compact();
+		expect(memory.currentUsed).toBeLessThan(fullMemory);
 
 		list.deleteIndex(0);
 		expect(flat(list)).toEqual([10, 8, 20]);
@@ -44,12 +47,13 @@ describe('SharedList', () => {
 		// Do nothing for bug deletes
 		list.deleteIndex(2);
 		expect(flat(list)).toEqual([10, 8]);
-		
+
 		// Delete everything and should still work
 		list.deleteIndex(0);
 		list.deleteIndex(0);
 		expect(flat(list)).toEqual([]);
 		expect(list.length).toEqual(0);
+		list.compact();
 		expect(memory.currentUsed).toEqual(startMemory);
 
 		list.insert(80);
@@ -68,8 +72,11 @@ describe('SharedList', () => {
 
 		list.deleteValue(4);
 		expect(flat(list)).toEqual([5, 10, 8, 20]);
-		expect(memory.currentUsed).toBeLessThan(fullMemory);
+		// Deferred reclamation: the tombstoned node's memory is not freed until compact()
+		expect(memory.currentUsed).toEqual(fullMemory);
 		expect(list.length).toEqual(4);
+		list.compact();
+		expect(memory.currentUsed).toBeLessThan(fullMemory);
 
 		list.deleteValue(5);
 		expect(flat(list)).toEqual([10, 8, 20]);
@@ -79,12 +86,13 @@ describe('SharedList', () => {
 		// Do nothing for bug deletes
 		list.deleteValue(15);
 		expect(flat(list)).toEqual([10, 8]);
-		
+
 		// Delete everything and should still work
 		list.deleteValue(10);
 		list.deleteValue(8);
 		expect(flat(list)).toEqual([]);
 		expect(list.length).toEqual(0);
+		list.compact();
 		expect(memory.currentUsed).toEqual(startMemory);
 
 		list.insert(80);
@@ -109,6 +117,9 @@ describe('SharedList', () => {
 		
 		expect(flat(list)).toEqual([5, 4, 8]);
 		expect(list.length).toEqual(3);
+		// Tombstoned nodes are only reclaimed on compact()
+		expect(memory.currentUsed).toEqual(fullMemory);
+		list.compact();
 		expect(memory.currentUsed).toBeLessThan(fullMemory);
 
 		// Delete concurrent indexes
@@ -136,7 +147,10 @@ describe('SharedList', () => {
 			list.deleteValue(70);
 		}
 
+		// Tombstones accumulate until compact() reclaims them
+		list.compact();
 		expect(memory.currentUsed).toEqual(startMemory);
+		expect(flat(list)).toEqual([5, 10]);
 	});
 
 	it('can delete with onDelete SharedString', () => {
@@ -152,7 +166,72 @@ describe('SharedList', () => {
 		let startMemory = memory.currentUsed;
 		list.insert((new SharedString(memory, 'Test')).pointer);
 		list.deleteIndex(2);
+		// onDelete (freeing the SharedString) fires at delete time, but the list node is reclaimed on compact()
+		list.compact();
 		expect(memory.currentUsed).toEqual(startMemory);
+	});
+
+	describe('compact', () => {
+		it('reclaims tombstoned nodes and preserves live order', () => {
+			let list = new SharedList(memory);
+			for(let value of [1, 2, 3, 4, 5, 6]) {
+				list.insert(value);
+			}
+			let fullMemory = memory.currentUsed;
+
+			list.deleteValue(2);
+			list.deleteValue(4);
+			list.deleteValue(6);
+			// Still linked (just skipped), memory unchanged until compact
+			expect(flat(list)).toEqual([1, 3, 5]);
+			expect(list.length).toEqual(3);
+			expect(memory.currentUsed).toEqual(fullMemory);
+
+			list.compact();
+			expect(flat(list)).toEqual([1, 3, 5]);
+			expect(list.length).toEqual(3);
+			expect(memory.currentUsed).toBeLessThan(fullMemory);
+
+			// List keeps working after compact - can still append and delete
+			list.insert(7);
+			expect(flat(list)).toEqual([1, 3, 5, 7]);
+			list.deleteValue(1);
+			list.compact();
+			expect(flat(list)).toEqual([3, 5, 7]);
+		});
+
+		it('compacting an empty or all-live list is a no-op', () => {
+			let list = new SharedList(memory);
+			list.compact();
+			expect(flat(list)).toEqual([]);
+
+			list.insert(10);
+			list.insert(20);
+			let before = memory.currentUsed;
+			list.compact();
+			expect(flat(list)).toEqual([10, 20]);
+			expect(memory.currentUsed).toEqual(before);
+
+			list.insert(30);
+			expect(flat(list)).toEqual([10, 20, 30]);
+		});
+
+		it('fires onDelete exactly once per removed item', () => {
+			let deleted: number[] = [];
+			let list = new SharedList(memory);
+			list.onDelete = data => deleted.push(data[0]);
+
+			list.insert(1);
+			list.insert(2);
+			list.insert(3);
+
+			list.deleteValue(2);
+			expect(deleted).toEqual([2]);
+
+			// compact frees the tombstoned node but must not re-fire onDelete
+			list.compact();
+			expect(deleted).toEqual([2]);
+		});
 	});
 
 	describe('clear', () => {
