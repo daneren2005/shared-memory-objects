@@ -52,6 +52,11 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		return this.firstBlock.pointer;
 	}
 
+	get usedMemory(): number {
+		let dataMemory = new AllocatedMemory(this.memory, loadPointer(this.firstBlock.data, VECTOR_INDEX));
+		return this.firstBlock.usedMemory + dataMemory.usedMemory;
+	}
+
 	private cachedFullDataBlock?: T;
 	private cachedPointer: number;
 

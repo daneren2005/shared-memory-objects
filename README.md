@@ -66,6 +66,18 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 - SharedString
 - ConstantString - an immutable SharedString: the value is written once and never changes, so it drops the lock word and all of SharedString's read/write locking
 
+## Memory Usage
+`SharedList`, `SharedVector`, `SharedPool`, and `SharedStack` each expose a `usedMemory` getter that returns the number of bytes the structure occupies in the heap, including every pointer resource it owns.  For example, `SharedStack.usedMemory` is its own internal memory plus the combined memory of each already allocated segment, and `SharedPool.usedMemory` includes each chunk buffer and the segments of its two internal stacks (but not those stacks' internal memory, since that is inlined into the pool's own internal memory).  The number is the aligned data size of each allocation and excludes the allocator's per-block header.  SharedStack and SharedPool get a lot of their close to native performance by allocating more memory than maybe needed and locking in max length up front.  This works well when used for a few high-performance structures, but if you are giving each entity in an ECS framework multiple SharedPools that memory is going to add up quickly.  Both SharedPool and SharedStack initial memory can be tweaked by lowering the maxLength param.
+
+Freshly allocated with the default options:
+
+| Structure     | Used Memory |
+| ------------- | ----------- |
+| SharedList    | 16 bytes    |
+| SharedVector  | 32 bytes    |
+| SharedStack   | 144 bytes   |
+| SharedPool    | 656 bytes   |
+
 ## Thread Safety
 - Memory allocations is thread safe as long as it does not need to create a new buffer.  Right now that can only be done from the main thread.
 - SharedList, SharedPool and SharedStack are thread safe

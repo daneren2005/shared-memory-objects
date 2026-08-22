@@ -17,6 +17,11 @@ export default class AllocatedMemory {
 	private buffer: MemoryBuffer;
 	data: Uint32Array;
 
+	// Bytes this allocation occupies in its buffer (aligned data size, excluding the block header)
+	get usedMemory(): number {
+		return this.buffer.bytesFor(this.data.byteOffset) ?? 0;
+	}
+
 	constructor(memory: MemoryHeap, config: AllocatedMemoryConfig | SharedAllocatedMemory) {
 		this.memory = memory;
 

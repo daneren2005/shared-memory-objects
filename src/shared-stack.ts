@@ -21,6 +21,7 @@ const SEGMENT_START_INDEX = 6;
 
 const DEFAULT_BASE_SEGMENT_LENGTH = 4;
 const DEFAULT_MAX_SEGMENTS = 20;
+const DEFAULT_MAX_LENGTH = DEFAULT_BASE_SEGMENT_LENGTH * (2 ** DEFAULT_MAX_SEGMENTS - 1);
 
 // The LENGTH word packs an ABA version counter (high bits) with the live count (low LEN_BITS). Both push and pop bump
 // the version on every successful CAS, so the CAS fails on ANY intervening op - the count can never ABA back to the
@@ -42,6 +43,19 @@ const VERSION_STEP = 1 << LEN_BITS;
 export default class SharedStack<T extends Uint32Array | Int32Array | Float32Array = Uint32Array> implements Iterable<number> {
 	static readonly BASE_ALLOCATE_COUNT = 7;
 	static readonly DEFAULT_ALLOCATE_COUNT = this.BASE_ALLOCATE_COUNT + DEFAULT_MAX_SEGMENTS;
+
+	// Smallest segment count whose capacity (baseSegmentLength * (2^n - 1)) covers maxLength, so we always allocate at
+	// least the requested length. Looped rather than log2'd to avoid float rounding landing a segment short or over.
+	static getMaxSegments(maxLength: number, baseSegmentLength = DEFAULT_BASE_SEGMENT_LENGTH): number {
+		let segments = 1;
+		while(baseSegmentLength * (2 ** segments - 1) < maxLength) {
+			segments++;
+		}
+		return segments;
+	}
+	static getAllocateCount(maxLength: number, baseSegmentLength = DEFAULT_BASE_SEGMENT_LENGTH): number {
+		return this.BASE_ALLOCATE_COUNT + this.getMaxSegments(maxLength, baseSegmentLength);
+	}
 	private memory: MemoryHeap;
 
 	// Length, Type, Base Segment Length, Max Segments, Segment Count, Grow Lock, Segments
@@ -93,6 +107,17 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 		return this.firstBlock.pointer;
 	}
 
+	// Own internal memory plus every allocated segment. The firstBlock is excluded when inlined in another structure
+	// (e.g. SharedPool) since that owner already counts it as part of its own internal memory.
+	get usedMemory(): number {
+		let total = this.ownsFirstBlock ? this.firstBlock.usedMemory : 0;
+		for(let i = 0; i < this.segmentCount; i++) {
+			let pointer = getPointer(Atomics.load(this.firstBlock.data, SEGMENT_START_INDEX + i));
+			total += new AllocatedMemory(this.memory, pointer).usedMemory;
+		}
+		return total;
+	}
+
 	constructor(memory: MemoryHeap, config?: SharedStackConfig<T> | SharedStackMemory | SharedStackMemory & SharedStackConfig<T>) {
 		this.memory = memory;
 
@@ -103,14 +128,15 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
 
 			// Memory passed together with config means the caller reserved the firstBlock slot for us to initialize in place
-			if('type' in config || 'baseSegmentLength' in config || 'segmentCount' in config) {
+			if('type' in config || 'baseSegmentLength' in config || 'maxLength' in config) {
 				this.initialize(config);
 				this.ownsFirstBlock = false;
 			} else {
 				this.ownsFirstBlock = true;
 			}
 		} else {
-			let maxSegments = config?.segmentCount ?? DEFAULT_MAX_SEGMENTS;
+			let baseSegmentLength = config?.baseSegmentLength ?? DEFAULT_BASE_SEGMENT_LENGTH;
+			let maxSegments = SharedStack.getMaxSegments(config?.maxLength ?? DEFAULT_MAX_LENGTH, baseSegmentLength);
 
 			this.firstBlock = memory.allocUI32(SharedStack.BASE_ALLOCATE_COUNT + maxSegments);
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
@@ -134,7 +160,7 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 		let firstSegmentBlock = this.memory.allocUI32(baseSegmentLength * 2);
 		storePointer(this.firstBlock.data, SEGMENT_START_INDEX, firstSegmentBlock.bufferPosition, firstSegmentBlock.bufferByteOffset);
 		this.baseSegmentLength = baseSegmentLength;
-		this.maxSegments = config?.segmentCount ?? DEFAULT_MAX_SEGMENTS;
+		this.maxSegments = SharedStack.getMaxSegments(config?.maxLength ?? DEFAULT_MAX_LENGTH, baseSegmentLength);
 		this.segmentCount = 1;
 
 		const type = config?.type ?? Uint32Array;
@@ -341,7 +367,7 @@ interface SharedStackConfig<T extends Uint32Array | Int32Array | Float32Array> {
 	type?: TypedArrayConstructor<T>
 
 	baseSegmentLength?: number
-	segmentCount?: number
+	maxLength?: number
 }
 interface SharedStackMemory {
 	firstBlock: SharedAllocatedMemory | AllocatedMemory

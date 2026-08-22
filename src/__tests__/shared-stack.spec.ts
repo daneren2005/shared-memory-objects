@@ -198,7 +198,7 @@ describe('SharedStack', () => {
 	it('errors start occuring when we hit max length', () => {
 		let stack = new SharedStack(memory, {
 			baseSegmentLength: 4,
-			segmentCount: 3,
+			maxLength: 28,
 		});
 		expect(stack.maxLength).toEqual(28);
 
@@ -209,10 +209,10 @@ describe('SharedStack', () => {
 		expect(() => stack.push(30)).toThrowError('29 is out of bounds 28');
 	});
 
-	it('maxSize is derived from baseSegments and maxSegments', () => {
+	it('maxSize is derived from baseSegments and maxLength', () => {
 		let stack = new SharedStack(memory, {
 			baseSegmentLength: 4,
-			segmentCount: 3,
+			maxLength: 28,
 		});
 		expect(stack.maxLength).toEqual(28);
 

@@ -61,6 +61,19 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 		return Atomics.load(this.firstBlock.data, LENGTH_INDEX);
 	}
 
+	// Own internal memory plus every allocated node still linked in the chain (tombstoned nodes included, since they stay
+	// allocated until a compact()/clear() reclaims them).
+	get usedMemory(): number {
+		let total = this.firstBlock.usedMemory;
+		let { bufferPosition, bufferByteOffset } = loadPointer(this.firstBlock.data, HEAD_INDEX);
+		while(bufferByteOffset) {
+			let node = new AllocatedMemory(this.memory, { bufferPosition, bufferByteOffset });
+			total += node.usedMemory;
+			({ bufferPosition, bufferByteOffset } = loadPointer(node.data, NODE_NEXT_INDEX));
+		}
+		return total;
+	}
+
 	get type(): number {
 		return this.cachedType;
 	}

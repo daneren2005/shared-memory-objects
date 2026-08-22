@@ -22,6 +22,10 @@ const GROW_LOCK_INDEX = 3;
 const POINTER_STACK_INDEX = 4;
 const RECYCLE_STACK_INDEX = 5;
 
+const DEFAULT_MAX_CHUNK_SIZE = 100;
+const DEFAULT_MAX_LENGTH = 1_000_000;
+const DEFAULT_MAX_RECYCLED_LENGTH = 100_000;
+
 // Array with stable indexes and maximum contiguous memory sizes (necessary to fit large data sets into max 1MB buffers).
 // The chunk pointers and the recycled indexes both live in SharedStacks, whose segments are never moved or freed once
 // published, so concurrent readers never touch memory that is being reclaimed.
@@ -36,6 +40,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	private growLock: Int32Array;
 	private pointerStack: SharedStack;
 	private recycleStack: SharedStack;
+	readonly maxLength: number;
 
 	private cachedFullDataBlock: { [key: number]: T } = {};
 
@@ -75,6 +80,16 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 		return this.cachedByteMultipler;
 	}
 
+	// Own internal memory (which already includes both stacks' inlined firstBlocks) plus every chunk buffer and the
+	// segments each stack has grown. The stacks' usedMemory excludes their inlined firstBlocks, so they aren't double-counted.
+	get usedMemory(): number {
+		let total = this.firstBlock.usedMemory;
+		for(let pointer of this.pointerStack) {
+			total += new AllocatedMemory(this.memory, getPointer(pointer)).usedMemory;
+		}
+		return total + this.pointerStack.usedMemory + this.recycleStack.usedMemory;
+	}
+
 	constructor(memory: MemoryHeap, config?: SharedPoolConfig<T> | SharedPoolMemory) {
 		this.memory = memory;
 
@@ -88,21 +103,30 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 				firstBlock: getPointer(loadRawPointer(this.firstBlock.data, RECYCLE_STACK_INDEX)),
 			});
 		} else {
+			let dataLength = config?.dataLength ?? 1;
+			let maxChunkSize = config?.maxChunkSize ?? DEFAULT_MAX_CHUNK_SIZE;
+			let maxLength = config?.maxLength ?? DEFAULT_MAX_LENGTH;
+			let maxRecycledLength = config?.maxRecycledLength ?? DEFAULT_MAX_RECYCLED_LENGTH;
+
+			// Each stack sizes its inlined firstBlock from its own maxLength, so compute both up front to lay them out
+			let pointerStackMaxLength = maxLength / maxChunkSize;
+			let pointerStackAllocateCount = SharedStack.getAllocateCount(pointerStackMaxLength);
+			let recycleStackAllocateCount = SharedStack.getAllocateCount(maxRecycledLength);
+
 			// Inline both stacks' firstBlocks right after the pool header so the whole spine is one contiguous allocation
-			this.firstBlock = memory.allocUI32(SharedPool.ALLOCATE_COUNT + SharedStack.DEFAULT_ALLOCATE_COUNT * 2);
+			this.firstBlock = memory.allocUI32(SharedPool.ALLOCATE_COUNT + pointerStackAllocateCount + recycleStackAllocateCount);
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
 
-			let dataLength = config?.dataLength ?? 1;
-			let maxLength = config?.maxChunkSize ?? 100;
-
 			this.pointerStack = new SharedStack(memory, {
-				firstBlock: this.firstBlock.getSubAllocation(SharedPool.ALLOCATE_COUNT, SharedStack.DEFAULT_ALLOCATE_COUNT),
+				firstBlock: this.firstBlock.getSubAllocation(SharedPool.ALLOCATE_COUNT, pointerStackAllocateCount),
 				type: Uint32Array,
+				maxLength: pointerStackMaxLength,
 			});
 			storeRawPointer(this.firstBlock.data, POINTER_STACK_INDEX, this.pointerStack.pointer);
 			this.recycleStack = new SharedStack(memory, {
-				firstBlock: this.firstBlock.getSubAllocation(SharedPool.ALLOCATE_COUNT + SharedStack.DEFAULT_ALLOCATE_COUNT, SharedStack.DEFAULT_ALLOCATE_COUNT),
+				firstBlock: this.firstBlock.getSubAllocation(SharedPool.ALLOCATE_COUNT + pointerStackAllocateCount, recycleStackAllocateCount),
 				type: Uint32Array,
+				maxLength: maxRecycledLength,
 			});
 			storeRawPointer(this.firstBlock.data, RECYCLE_STACK_INDEX, this.recycleStack.pointer);
 
@@ -120,11 +144,11 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 				this.type = TYPE.float64;
 			}
 			this.dataLength = dataLength;
-			this.maxChunkSize = maxLength;
+			this.maxChunkSize = maxChunkSize;
 
 			// @ts-expect-error
 			let byteMultipler = type === Float64Array ? 2 : 1;
-			let firstArray = memory.allocUI32(maxLength * dataLength * byteMultipler);
+			let firstArray = memory.allocUI32(maxChunkSize * dataLength * byteMultipler);
 			this.pointerStack.push(firstArray.pointer);
 		}
 
@@ -132,6 +156,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 		this.cachedDataLength = Math.max(1, this.uint16Array[1]);
 		this.cachedMaxChunkSize = this.firstBlock.data[MAX_CHUNK_SIZE_INDEX];
 		this.cachedByteMultipler = this.cachedType === TYPE.float64 ? 2 : 1;
+		this.maxLength = this.cachedMaxChunkSize * this.pointerStack.maxLength;
 
 		this.growLock = new Int32Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + GROW_LOCK_INDEX * Uint32Array.BYTES_PER_ELEMENT, 1);
 	}
@@ -280,6 +305,8 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 
 interface SharedPoolConfig<T extends Uint32Array | Int32Array | Float32Array | Float64Array> {
 	maxChunkSize?: number
+	maxLength?: number
+	maxRecycledLength?: number
 	type?: TypedArrayConstructor<T>
 	dataLength?: number
 }
