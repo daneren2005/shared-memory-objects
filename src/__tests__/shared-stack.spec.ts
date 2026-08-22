@@ -218,8 +218,43 @@ describe('SharedStack', () => {
 
 		let defaults = new SharedStack(memory);
 		expect(defaults.baseSegmentLength).toEqual(4);
+		// The default is a 20-segment budget: segments double until they reach the largest a buffer holds, then stay flat,
+		// so maxLength is the honest capacity of those 20 segments rather than the old unreachable power-of-two ceiling
 		expect(defaults.maxSegments).toEqual(20);
-		expect(defaults.maxLength).toEqual(4_194_300);
+		expect(defaults.maxSegmentLength).toEqual(SharedStack.getMaxSegmentLength(memory.maxAllocationLength));
+		expect(defaults.maxLength).toEqual(SharedStack.getCapacity(20, 4, defaults.maxSegmentLength));
+	});
+
+	it('caps segment growth at maxSegmentLength instead of doubling forever', () => {
+		// 4, 8, 16, 16, 16 - once capped at 16 the segments stay flat so no single segment outgrows a buffer
+		let stack = new SharedStack(memory, {
+			baseSegmentLength: 4,
+			maxSegmentLength: 16,
+			maxLength: 60,
+		});
+		expect(stack.maxSegmentLength).toEqual(16);
+		expect(stack.maxSegments).toEqual(5);
+		expect(stack.maxLength).toEqual(60);
+
+		let expectedValues = [];
+		for(let i = 0; i < 60; i++) {
+			stack.push(i);
+			expectedValues.push(i);
+		}
+		expect(flat(stack)).toEqual(expectedValues);
+		expect(stack.at(3)).toEqual(3); // last slot of the base segment
+		expect(stack.at(4)).toEqual(4); // first slot of segment 1
+		expect(stack.at(28)).toEqual(28); // first slot of the first capped segment
+		expect(stack.at(59)).toEqual(59);
+		expect(() => stack.push(60)).toThrowError('61 is out of bounds 60');
+	});
+
+	it('floors a requested maxSegmentLength to a power-of-two multiple of the base', () => {
+		let stack = new SharedStack(memory, {
+			baseSegmentLength: 4,
+			maxSegmentLength: 20, // floored down to 16
+		});
+		expect(stack.maxSegmentLength).toEqual(16);
 	});
 });
 

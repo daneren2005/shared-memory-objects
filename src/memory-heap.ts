@@ -1,6 +1,6 @@
 import AllocatedMemory, { type SharedAllocatedMemory } from './allocated-memory';
 import { MAX_BYTE_OFFSET_LENGTH, MAX_POSITION_LENGTH } from './utils/pointer';
-import MemoryBuffer from './memory-buffer';
+import MemoryBuffer, { SIZEOF_MEM_BLOCK, SIZEOF_STATE } from './memory-buffer';
 
 const DEFAULT_BUFFER_SIZE = MAX_BYTE_OFFSET_LENGTH;
 const BUFFER_SIZE_INDEX = 0;
@@ -14,6 +14,12 @@ export default class MemoryHeap {
 
 	get bufferSize() {
 		return this.memory.data[BUFFER_SIZE_INDEX];
+	}
+
+	// Largest u32 count a single fresh buffer can hand out in one allocation: the buffer minus the allocator state and the
+	// block header. A structure that grows in segments must keep each segment within this or the allocation can never fit.
+	get maxAllocationLength() {
+		return Math.floor((this.bufferSize - SIZEOF_STATE - SIZEOF_MEM_BLOCK) / Uint32Array.BYTES_PER_ELEMENT);
 	}
 
 	constructor(config?: MemoryHeapConfig | MemoryHeapMemory) {

@@ -576,6 +576,11 @@ function align(addr: number, size: number) {
 	size--;
 	return addr + size & ~size;
 }
+
+// Bytes reserved before usable heap space (allocator state) and the per-allocation block header. Exported so callers can
+// size an allocation against what a single buffer can actually hold.
+export { SIZEOF_STATE, SIZEOF_MEM_BLOCK };
+
 type Type = 'u8' | 'u8c' | 'i8' | 'u16' | 'i16' | 'u32' | 'i32' | 'f32' | 'f64';
 
 interface MemoryBufferConfig {

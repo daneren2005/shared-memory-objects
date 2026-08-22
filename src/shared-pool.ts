@@ -108,10 +108,12 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 			let maxLength = config?.maxLength ?? DEFAULT_MAX_LENGTH;
 			let maxRecycledLength = config?.maxRecycledLength ?? DEFAULT_MAX_RECYCLED_LENGTH;
 
-			// Each stack sizes its inlined firstBlock from its own maxLength, so compute both up front to lay them out
+			// Each stack sizes its inlined firstBlock from its own maxLength, so compute both up front to lay them out. The
+			// stacks cap their segments at what a buffer can hold, so size the inlined blocks against that same cap.
+			let maxSegmentLength = SharedStack.getMaxSegmentLength(memory.maxAllocationLength);
 			let pointerStackMaxLength = maxLength / maxChunkSize;
-			let pointerStackAllocateCount = SharedStack.getAllocateCount(pointerStackMaxLength);
-			let recycleStackAllocateCount = SharedStack.getAllocateCount(maxRecycledLength);
+			let pointerStackAllocateCount = SharedStack.getAllocateCount(pointerStackMaxLength, undefined, maxSegmentLength);
+			let recycleStackAllocateCount = SharedStack.getAllocateCount(maxRecycledLength, undefined, maxSegmentLength);
 
 			// Inline both stacks' firstBlocks right after the pool header so the whole spine is one contiguous allocation
 			this.firstBlock = memory.allocUI32(SharedPool.ALLOCATE_COUNT + pointerStackAllocateCount + recycleStackAllocateCount);
