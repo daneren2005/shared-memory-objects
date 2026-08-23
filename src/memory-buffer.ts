@@ -372,6 +372,12 @@ export default class MemoryBuffer {
 		Atomics.store(this.state, STATE_TOP, x);
 	}
 
+	// No live allocations. O(1) (the head of the used list, not a walk like stats()), so it is cheap to poll each
+	// frame when checking whether a spare buffer is still available.
+	get isEmpty(): boolean {
+		return this._used === 0;
+	}
+
 	protected get _free() {
 		return Atomics.load(this.state, STATE_FREE);
 	}

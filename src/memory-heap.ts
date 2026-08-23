@@ -115,6 +115,23 @@ export default class MemoryHeap {
 		this.onGrowBufferHandlers.push(handler);
 	}
 
+	// Guarantees at least one completely-empty buffer exists and (via the grow handlers) has been fanned out to every
+	// thread. Call this on the owning thread before dispatching work that allocates on another thread (a worker): that
+	// allocation then lands in a buffer everyone already holds instead of forcing growBuffer on the worker, which would
+	// create a buffer only the worker can see and leave every other thread unable to resolve pointers into it. Returns
+	// true if it had to grow one.
+	ensureSpareBuffer(): boolean {
+		for(let i = 0; i < this.buffers.length; i++) {
+			const buffer = this.buffers[i];
+			if(buffer && buffer.isEmpty) {
+				return false;
+			}
+		}
+
+		this.growBuffer();
+		return true;
+	}
+
 	allocUI32(count: number): AllocatedMemory {
 		count = Math.ceil(count);
 		for(let i = 0; i < this.buffers.length; i++) {

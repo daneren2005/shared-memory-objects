@@ -142,6 +142,29 @@ describe('MemoryHeap', () => {
 		expect(shared3).toBeDefined();
 	});
 
+	it('ensureSpareBuffer grows a fanned-out empty buffer only when none is free', () => {
+		let mainMemory = new MemoryHeap({ bufferSize: 200 });
+		let copyMemory = new MemoryHeap(mainMemory.getSharedMemory());
+		mainMemory.addOnGrowBufferHandlers(newBuffer => copyMemory.addSharedBuffer(newBuffer));
+
+		// Fresh heap: the only buffer holds the header, so it is not empty and a spare must be grown.
+		expect(mainMemory.ensureSpareBuffer()).toBe(true);
+		expect(mainMemory.buffers.length).toEqual(2);
+		// The grown buffer was fanned out to the copy.
+		expect(copyMemory.buffers.length).toEqual(2);
+
+		// The spare (buffer 1) is still empty, so another call is a no-op.
+		expect(mainMemory.ensureSpareBuffer()).toBe(false);
+		expect(mainMemory.buffers.length).toEqual(2);
+
+		// Fill both buffers so no empty spare remains; ensureSpareBuffer then grows a fresh one.
+		mainMemory.allocUI32(20);
+		mainMemory.allocUI32(20);
+		expect(mainMemory.buffers.some(buffer => buffer.isEmpty)).toBe(false);
+		expect(mainMemory.ensureSpareBuffer()).toBe(true);
+		expect(mainMemory.buffers.length).toEqual(3);
+	});
+
 	it('round allocs', () => {
 		let memory = new MemoryHeap({ bufferSize: 200 });
 
