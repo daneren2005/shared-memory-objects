@@ -77,18 +77,15 @@ Freshly allocated with the default options:
 | SharedVector  | 32 bytes    |
 | SharedStack   | 144 bytes   |
 | SharedPool    | 656 bytes   |
+| SharedMap     | 216 bytes   |
 
 ## Thread Safety
-- Memory allocations is thread safe as long as it does not need to create a new buffer.  Right now that can only be done from the main thread.
-- SharedList, SharedPool and SharedStack are thread safe
+- Memory allocations is thread safe as long as it does not need to create a new buffer.  Right now that can only be done from the main thread.  I just make sure there is always an extra empty buffer with SharedHeap.ensureSpareBuffer() before sending more work to worker threads.
+- SharedList, SharedPool, SharedStack, and SharedMap are thread safe
 - SharedVector is *not* thread safe and probably never will be - it is useful for updating in main thread and then sending off to works for processing
-- SharedMap is *not* thread safe and is honestly so slow as to be basically worthless
 - SharedString is thread safe with a lock on read/write with a cached version of the string so it doesn't need to lock after the first read unless the string has changed.
 - ConstantString is safe to read from any thread without a lock precisely because it is never written after construction
 
-## TODO
-- Make creating new buffers from allocations possible from multiple threads
-- Make map structure that isn't so slow as to be useless
 
 ## Performance
 The tl;dr is that none of these data structures are close to what you can get by just using native data structures, but I wasn't expecting them to be with their overhead.
@@ -197,6 +194,59 @@ local pool
 2.57x faster than shared pool
 26.54x faster than shared vector
 985.37x faster than shared list
+```
+
+### SharedMap vs native Map
+`SharedMap` uses open-addressing with linear probing over a contiguous SharedArrayBuffer table, so it stays within a small constant factor of the native `Map` rather than the order-of-magnitude gap seen elsewhere.  Iterating and deleting are the closest to native; sets are the slowest since they can trigger a rehash.  Keys of 1000 numbers, values randomized:
+
+Shared Map: 1000 sets
+```
+name               hz     min     max    mean     p75     p99    p995    p999     rme  samples
+shared map   7,565.94  0.1166  1.1183  0.1322  0.1278  0.2565  0.2973  0.3598  ±0.76%     3783
+native map  48,357.73  0.0177  0.2432  0.0207  0.0199  0.0808  0.0934  0.1398  ±0.57%    24179
+
+native map
+6.39x faster than shared map
+```
+
+Shared Map: 1000 overwrites
+```
+name               hz     min     max    mean     p75     p99    p995    p999     rme  samples
+shared map  16,906.24  0.0551  0.2499  0.0591  0.0569  0.1194  0.1433  0.1940  ±0.43%     8454
+native map  83,196.44  0.0105  0.1686  0.0120  0.0119  0.0197  0.0231  0.0465  ±0.27%    41599
+
+native map
+4.92x faster than shared map
+```
+
+Shared Map: 1000 gets
+```
+name               hz     min     max    mean     p75     p99    p995    p999     rme  samples
+shared map  16,598.62  0.0494  0.3111  0.0602  0.0593  0.1121  0.1279  0.1718  ±0.70%     8300
+native map  93,483.83  0.0073  2.7586  0.0107  0.0138  0.0222  0.0255  0.0398  ±1.23%    46742
+
+native map
+5.63x faster than shared map
+```
+
+Shared Map: 1000 deletes
+```
+name               hz     min     max    mean     p75     p99    p995    p999     rme  samples
+shared map  17,590.31  0.0497  0.2837  0.0568  0.0526  0.1252  0.1393  0.1909  ±0.59%     8796
+native map  59,139.95  0.0147  0.2453  0.0169  0.0164  0.0291  0.0349  0.1017  ±0.36%    29570
+
+native map
+3.36x faster than shared map
+```
+
+Shared Map: iterate 1000 entries
+```
+name               hz     min     max    mean     p75     p99    p995    p999     rme  samples
+shared map  31,900.32  0.0213  0.4626  0.0313  0.0375  0.0552  0.2321  0.3119  ±1.03%    15951
+native map  93,101.22  0.0068  0.1661  0.0107  0.0127  0.0194  0.0224  0.0320  ±0.25%    46551
+
+native map
+2.92x faster than shared map
 ```
 
 ## Credit

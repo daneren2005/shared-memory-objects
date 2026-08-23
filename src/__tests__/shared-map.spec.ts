@@ -140,5 +140,68 @@ describe('SharedMap', () => {
 			expect(map.get(2)).toBeUndefined();
 			expect(map.delete(2)).toEqual(false);
 		});
+
+		it('handles key 0 and value 0', () => {
+			let map = new SharedMap<number>(memory);
+			map.set(0, 0);
+			expect(map.has(0)).toEqual(true);
+			expect(map.get(0)).toEqual(0);
+			expect(map.delete(0)).toEqual(true);
+			expect(map.get(0)).toBeUndefined();
+		});
+
+		it('reuses a tombstone slot so length stays correct after delete then re-insert', () => {
+			let map = new SharedMap<number>(memory);
+			map.set(1, 10);
+			map.set(2, 20);
+			map.delete(1);
+			map.set(1, 11);
+			expect(map.length).toEqual(2);
+			expect(map.get(1)).toEqual(11);
+			expect(map.get(2)).toEqual(20);
+		});
+
+		it('stores signed values with Int32Array', () => {
+			let map = new SharedMap<number, Int32Array>(memory, { type: Int32Array });
+			map.set(1, -100);
+			map.set(2, 2147483647);
+			map.set(3, -2147483648);
+			expect(map.get(1)).toEqual(-100);
+			expect(map.get(2)).toEqual(2147483647);
+			expect(map.get(3)).toEqual(-2147483648);
+		});
+
+		it('stores fractional values with Float32Array', () => {
+			let map = new SharedMap<number, Float32Array>(memory, { type: Float32Array });
+			map.set(1, 0.5);
+			map.set(2, -3.25);
+			expect(map.get(1)).toEqual(0.5);
+			expect(map.get(2)).toEqual(-3.25);
+			// Survives a rehash with the value type preserved
+			for(let i = 10; i < 60; i++) {
+				map.set(i, i + 0.5);
+			}
+			expect(map.get(1)).toEqual(0.5);
+			expect(map.get(42)).toEqual(42.5);
+		});
+
+		it('iterates every live entry exactly once', () => {
+			let map = new SharedMap<number>(memory);
+			for(let i = 0; i < 50; i++) {
+				map.set(i, i * 10);
+			}
+			map.delete(7);
+			map.delete(42);
+
+			let seen = new Map<number, number>();
+			for(let [key, value] of map) {
+				seen.set(key, value);
+			}
+
+			expect(seen.size).toEqual(48);
+			expect(seen.get(7)).toBeUndefined();
+			expect(seen.get(42)).toBeUndefined();
+			expect(seen.get(13)).toEqual(130);
+		});
 	});
 });
