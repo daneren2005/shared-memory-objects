@@ -43,6 +43,24 @@ describe('SharedMap', () => {
 			expect(map.length).toEqual(3);
 		});
 
+		it('update does an atomic read-modify-write, inserting when absent', () => {
+			let map = new SharedMap<string>(memory);
+
+			// Absent key: updater sees undefined and the returned value is inserted.
+			expect(map.update('ore', current => (current ?? 0) + 5)).toEqual(5);
+			expect(map.get('ore')).toEqual(5);
+			expect(map.length).toEqual(1);
+
+			// Existing key: updater sees the stored value; length is unchanged.
+			expect(map.update('ore', current => (current ?? 0) + 3)).toEqual(8);
+			expect(map.get('ore')).toEqual(8);
+			expect(map.length).toEqual(1);
+
+			// Clamping subtraction never wraps past zero.
+			expect(map.update('ore', current => Math.max(0, (current ?? 0) - 100))).toEqual(0);
+			expect(map.get('ore')).toEqual(0);
+		});
+
 		it('free', () => {
 			let startMemory = memory.currentUsed;
 			let map = new SharedMap<string>(memory);

@@ -168,6 +168,61 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 		}
 	}
 
+	// Atomic read-modify-write under the table lock: resolves the current value (undefined if the key is
+	// absent), calls updater, and stores the result - so two threads mutating the same key never lose an
+	// update the way a separate get() + set() can. updater runs inside the lock and must be synchronous and
+	// must not touch this same map (the lock is not reentrant).
+	update(key: K, updater: (current: V[number] | undefined) => V[number]): V[number] {
+		let fullHashKey = get32BitHash(key);
+
+		lock(this.lock);
+		try {
+			let data = this.pointerMemory.data;
+			let length = data[LENGTH_INDEX];
+			let tombstones = data[TOMBSTONE_INDEX];
+			if((length + tombstones + 1) * LOAD_DENOMINATOR > data[CAPACITY_INDEX] * LOAD_NUMERATOR) {
+				this.resize();
+			}
+
+			this.ensureTable();
+			let slots = this.cachedSlots!;
+			let values = this.cachedValues! as NumericArrayIO;
+			let capacity = this.cachedCapacity;
+			let mask = capacity - 1;
+			let keysBase = capacity;
+			let idx = mix32(fullHashKey) & mask;
+			let firstTomb = -1;
+			// eslint-disable-next-line no-constant-condition
+			while(true) {
+				let state = slots[idx];
+				if(state === EMPTY) {
+					let newValue = updater(undefined);
+					let target = firstTomb >= 0 ? firstTomb : idx;
+					slots[target] = FULL;
+					slots[keysBase + target] = fullHashKey;
+					values[target] = newValue;
+					data[LENGTH_INDEX]++;
+					if(firstTomb >= 0) {
+						data[TOMBSTONE_INDEX]--;
+					}
+					return newValue;
+				} else if(state === TOMBSTONE) {
+					if(firstTomb < 0) {
+						firstTomb = idx;
+					}
+				} else if(slots[keysBase + idx] === fullHashKey) {
+					let newValue = updater(values[idx]);
+					values[idx] = newValue;
+					return newValue;
+				}
+
+				idx = (idx + 1) & mask;
+			}
+		} finally {
+			unlock(this.lock);
+		}
+	}
+
 	get(key: K): V[number] | undefined {
 		let fullHashKey = get32BitHash(key);
 
