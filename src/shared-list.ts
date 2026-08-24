@@ -1,14 +1,8 @@
 import type { SharedAllocatedMemory } from './allocated-memory';
 import AllocatedMemory from './allocated-memory';
-import type { TypedArrayConstructor } from './interfaces/typed-array-constructor';
 import type MemoryHeap from './memory-heap';
 import { loadPointer, loadRawPointer, POSITION_BIT_COUNT, replaceRawPointer, storeRawPointer } from './utils/pointer';
-
-enum TYPE {
-	uint32,
-	int32,
-	float32,
-}
+import { getArrayTypeCode, getByteMultipler, isBigIntType, isFloatType, makeArrayView, type NumericArray, type NumericArrayIO, type TypedArrayConstructor } from './utils/array-type';
 
 // Lock-free singly-linked list. firstBlock doubles as an immortal sentinel node whose next pointer (index 0) is the head.
 // insert appends with a Michael-Scott CAS enqueue; delete only tombstones a node (never unlinks/frees). Memory is
@@ -25,7 +19,7 @@ const NODE_NEXT_INDEX = 0;
 const NODE_DELETED_INDEX = 1;
 // A pointer packs the buffer position in its low bits and the byte offset in the high bits (see utils/pointer)
 const POSITION_MASK = (1 << POSITION_BIT_COUNT) - 1;
-export default class SharedList<T extends Uint32Array | Int32Array | Float32Array = Uint32Array> implements Iterable<SharedListIterable<T>> {
+export default class SharedList<T extends NumericArray = Uint32Array> implements Iterable<SharedListIterable<T>> {
 	static readonly ALLOCATE_COUNT = FIRST_BLOCK_RECORD_KEEPING_COUNT;
 
 	private memory: MemoryHeap;
@@ -52,6 +46,13 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 	// type and dataLength are written once at init and never change, so cache them instead of atomic-loading per node
 	private cachedType: number;
 	private cachedDataLength: number;
+	// u32 units per element: 1 for 32-bit types, 2 for 64-bit (float64/int64/uint64). Node data blocks scale by this.
+	private cachedByteMultipler = 1;
+	// Whether the value type is a BigInt view (int64/uint64), so insert stores bigint via Atomics; cached to keep the
+	// per-insert branch off an instanceof check
+	private cachedIsBigInt = false;
+	// Float views can't be published with Atomics, so insert falls back to a plain store for them
+	private cachedIsFloat = false;
 	// One full-buffer Uint32Array per buffer position, so traversal indexes shared memory directly instead of
 	// allocating a fresh view (and a getPointer object) for every node it touches
 	private bufferViews: Array<Uint32Array> = [];
@@ -105,26 +106,20 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 			// Empty list: the tail hint points at the sentinel (firstBlock) so insert never special-cases the first node
 			storeRawPointer(this.firstBlock.data, TAIL_INDEX, this.firstBlock.pointer);
 
-			const type = config?.type ?? Uint32Array;
-			if(type === Uint32Array) {
-				this.type = TYPE.uint32;
-			// @ts-expect-error
-			} else if(type === Int32Array) {
-				this.type = TYPE.int32;
-			// @ts-expect-error
-			} else if(type === Float32Array) {
-				this.type = TYPE.float32;
-			}
+			this.type = getArrayTypeCode(config?.type ?? Uint32Array);
 			this.dataLength = config?.dataLength ?? 1;
 		}
 
 		this.cachedType = Atomics.load(this.uint16Array, 0);
 		// dataLength defaults to at least one even when initialized from raw memory that was never explicitly set
 		this.cachedDataLength = Math.max(1, Atomics.load(this.uint16Array, 1));
+		this.cachedByteMultipler = getByteMultipler(this.cachedType);
+		this.cachedIsBigInt = isBigIntType(this.cachedType);
+		this.cachedIsFloat = isFloatType(this.cachedType);
 	}
 
-	insert(values: number | Array<number>) {
-		if(typeof values === 'number') {
+	insert(values: T[number] | Array<T[number]>) {
+		if(!Array.isArray(values)) {
 			values = [values];
 		}
 
@@ -132,16 +127,19 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 		if(values.length > dataLength) {
 			throw new Error(`Can't insert ${values.length} array into shared list of ${dataLength} dataLength`);
 		}
-		let newBlock = this.memory.allocUI32(DATA_BLOCK_RECORD_KEEPING_COUNT + dataLength);
+		let newBlock = this.memory.allocUI32(DATA_BLOCK_RECORD_KEEPING_COUNT + dataLength * this.cachedByteMultipler);
 		let newData = this.getDataBlock(newBlock.data.buffer, newBlock.data.byteOffset);
 		let newBlockPointer = newBlock.pointer;
 
+		let io = newData as NumericArrayIO;
 		for(let i = 0; i < values.length; i++) {
-			if(newData instanceof Int32Array || newData instanceof Uint32Array) {
-				Atomics.store(newData, i, values[i]);
+			if(this.cachedIsFloat) {
+				// Float views don't support Atomics; the enqueue CAS below still provides the cross-thread publish
+				io[i] = values[i];
+			} else if(this.cachedIsBigInt) {
+				Atomics.store(newData as BigInt64Array, i, values[i] as bigint);
 			} else {
-				// TODO: Should we replace with pass thru float32 conversion -> store?
-				newData[i] = values[i];
+				Atomics.store(newData as Int32Array, i, values[i] as number);
 			}
 		}
 
@@ -205,8 +203,8 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 
 		return false;
 	}
-	deleteValue(deleteValues: number | Array<number>) {
-		if(typeof deleteValues === 'number') {
+	deleteValue(deleteValues: T[number] | Array<T[number]>) {
+		if(!Array.isArray(deleteValues)) {
 			return this.deleteMatch(values => values[0] === deleteValues);
 		} else {
 			return this.deleteMatch(values => {
@@ -383,17 +381,7 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 
 	private getDataBlock(buffer: ArrayBufferLike, nodeByteOffset: number): T {
 		const startIndex = nodeByteOffset + DATA_BLOCK_BYTE_OFFSET;
-
-		switch(this.cachedType) {
-			case TYPE.int32:
-				return new Int32Array(buffer, startIndex, this.cachedDataLength) as T;
-			case TYPE.uint32:
-				return new Uint32Array(buffer, startIndex, this.cachedDataLength) as T;
-			case TYPE.float32:
-				return new Float32Array(buffer, startIndex, this.cachedDataLength) as T;
-			default:
-				throw new Error(`Unknown data block type ${this.cachedType}`);
-		}
+		return makeArrayView(this.cachedType, buffer, startIndex, this.cachedDataLength) as T;
 	}
 
 	free() {
@@ -417,7 +405,7 @@ export default class SharedList<T extends Uint32Array | Int32Array | Float32Arra
 	}
 }
 
-interface SharedListConfig<T extends Uint32Array | Int32Array | Float32Array> {
+interface SharedListConfig<T extends NumericArray> {
 	initWithBlock?: SharedAllocatedMemory
 	type?: TypedArrayConstructor<T>
 	dataLength?: number
@@ -426,7 +414,7 @@ interface SharedListMemory {
 	firstBlock: SharedAllocatedMemory
 }
 
-interface SharedListIterable<T extends Uint32Array | Int32Array | Float32Array> {
+interface SharedListIterable<T extends NumericArray> {
 	data: T
 	index: number
 	deleteCurrent: () => boolean

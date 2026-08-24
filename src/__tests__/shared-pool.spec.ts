@@ -215,6 +215,48 @@ describe('SharedPool', () => {
 		}
 	});
 
+	it('int64', () => {
+		let vector = new SharedPool(memory, {
+			type: BigInt64Array,
+		});
+		expect(vector.byteMultipler).toEqual(2);
+
+		vector.push(5n);
+		vector.push(-10n);
+		vector.push(9223372036854775807n);
+		vector.push(-9223372036854775808n);
+
+		expect(vector.length).toEqual(4);
+		expect(flat(vector)).toEqual([5n, -10n, 9223372036854775807n, -9223372036854775808n]);
+		expect(vector.get(2)).toEqual(9223372036854775807n);
+
+		// Recycled index keeps the bigint type
+		vector.deleteIndex(1);
+		expect(vector.push(42n)).toEqual(1);
+		expect(vector.get(1)).toEqual(42n);
+
+		// Grow across chunks to make sure the 64-bit stride holds
+		for(let i = 0n; i < 1_000n; i++) {
+			vector.push(i);
+		}
+		for(let i = 0n; i < 1_000n; i++) {
+			expect(vector.get(Number(i) + 4)).toEqual(i);
+		}
+	});
+	it('uint64', () => {
+		let vector = new SharedPool(memory, {
+			type: BigUint64Array,
+		});
+		expect(vector.byteMultipler).toEqual(2);
+
+		vector.push(5n);
+		vector.push(18446744073709551615n);
+
+		expect(vector.length).toEqual(2);
+		expect(flat(vector)).toEqual([5n, 18446744073709551615n]);
+		expect(vector.get(1)).toEqual(18446744073709551615n);
+	});
+
 	it('can work from memory', () => {
 		let mainVector = new SharedPool(memory, {
 			type: Uint32Array,

@@ -1,9 +1,9 @@
 import AllocatedMemory, { type SharedAllocatedMemory } from './allocated-memory';
-import type { TypedArrayConstructor } from './interfaces/typed-array-constructor';
 import type MemoryHeap from './memory-heap';
 import { getPointer, storeRawPointer } from './utils/pointer';
 import { get32BitHash, mix32 } from './utils/hash';
 import { lock, unlock, SIMPLE_LOCK_ALLOCATE_COUNT } from './lock/simple-lock';
+import { getArrayTypeCode, getByteMultipler, makeArrayView, type NumericArray, type NumericArrayIO, type TypedArrayConstructor } from './utils/array-type';
 
 // Open-addressing hash map with linear probing, held in one contiguous table (no per-bucket lists, no per-operation
 // allocation). A single exclusive lock guards the table so slot reads/writes inside the critical section can be plain
@@ -18,12 +18,6 @@ import { lock, unlock, SIMPLE_LOCK_ALLOCATE_COUNT } from './lock/simple-lock';
 // map was created with (Uint32Array by default, or Int32Array / Float32Array). Iteration is a best-effort scan that is
 // not lock-guarded, so it must not run concurrently with mutation from another thread. A single allocation can't span
 // buffers, so the table is bounded by MemoryHeap.maxAllocationLength.
-
-enum TYPE {
-	uint32,
-	int32,
-	float32,
-}
 
 const EMPTY = 0;
 const FULL = 1;
@@ -42,7 +36,7 @@ const TOMBSTONE_INDEX = 3;
 const CAPACITY_INDEX = 4;
 const TYPE_INDEX = 5;
 
-export default class SharedMap<K extends string | number, V extends Uint32Array | Int32Array | Float32Array = Uint32Array> {
+export default class SharedMap<K extends string | number, V extends NumericArray = Uint32Array> {
 	static readonly ALLOCATE_COUNT = 6;
 
 	private memory: MemoryHeap;
@@ -50,6 +44,9 @@ export default class SharedMap<K extends string | number, V extends Uint32Array 
 	private lock: Int32Array;
 	// Value type is written once at creation and never changes, so resolve it once instead of reading metadata per op
 	private cachedType: number;
+	// u32 units per value slot: 1 for 32-bit types, 2 for 64-bit (float64/int64/uint64). The values region and every
+	// table allocation scale by this.
+	private cachedValueUnits = 1;
 
 	// Cache the resolved views so most operations avoid rebuilding them. Rebuild whenever the table pointer OR the capacity
 	// changes: the pointer alone is not enough because the allocator recycles freed addresses (split:false), so a rehash can
@@ -79,17 +76,14 @@ export default class SharedMap<K extends string | number, V extends Uint32Array 
 		this.cachedTablePointer = pointer;
 	}
 	private makeValuesView(table: AllocatedMemory, capacity: number): V {
+		// states and keys each take one u32 per slot, so the values region starts after 2 * capacity u32s
 		let byteOffset = table.bufferByteOffset + capacity * 2 * Uint32Array.BYTES_PER_ELEMENT;
-		switch(this.cachedType) {
-			case TYPE.int32:
-				return new Int32Array(table.data.buffer, byteOffset, capacity) as V;
-			case TYPE.uint32:
-				return new Uint32Array(table.data.buffer, byteOffset, capacity) as V;
-			case TYPE.float32:
-				return new Float32Array(table.data.buffer, byteOffset, capacity) as V;
-			default:
-				throw new Error(`Unknown value type ${this.cachedType}`);
-		}
+		return makeArrayView(this.cachedType, table.data.buffer, byteOffset, capacity) as V;
+	}
+	// u32s a table of this capacity needs: states + keys (one each per slot) plus the values region, which is
+	// cachedValueUnits u32s per slot.
+	private tableLength(capacity: number): number {
+		return capacity * (2 + this.cachedValueUnits);
 	}
 
 	get length(): number {
@@ -112,26 +106,19 @@ export default class SharedMap<K extends string | number, V extends Uint32Array 
 			this.pointerMemory = new AllocatedMemory(memory, config.firstBlock);
 		} else {
 			this.pointerMemory = memory.allocUI32(SharedMap.ALLOCATE_COUNT);
-			let table = memory.allocUI32(DEFAULT_CAPACITY * 3);
+			let typeCode = getArrayTypeCode(config?.type ?? Uint32Array);
+			this.cachedValueUnits = getByteMultipler(typeCode);
+			let table = memory.allocUI32(DEFAULT_CAPACITY * (2 + this.cachedValueUnits));
 			storeRawPointer(this.pointerMemory.data, TABLE_POINTER_INDEX, table.pointer);
 			Atomics.store(this.pointerMemory.data, CAPACITY_INDEX, DEFAULT_CAPACITY);
-
-			const type = config?.type ?? Uint32Array;
-			if(type === Uint32Array) {
-				Atomics.store(this.pointerMemory.data, TYPE_INDEX, TYPE.uint32);
-			// @ts-expect-error
-			} else if(type === Int32Array) {
-				Atomics.store(this.pointerMemory.data, TYPE_INDEX, TYPE.int32);
-			// @ts-expect-error
-			} else if(type === Float32Array) {
-				Atomics.store(this.pointerMemory.data, TYPE_INDEX, TYPE.float32);
-			}
+			Atomics.store(this.pointerMemory.data, TYPE_INDEX, typeCode);
 		}
 		this.lock = new Int32Array(this.pointerMemory.data.buffer, this.pointerMemory.bufferByteOffset + LOCK_INDEX * Uint32Array.BYTES_PER_ELEMENT, SIMPLE_LOCK_ALLOCATE_COUNT);
 		this.cachedType = Atomics.load(this.pointerMemory.data, TYPE_INDEX);
+		this.cachedValueUnits = getByteMultipler(this.cachedType);
 	}
 
-	set(key: K, value: number) {
+	set(key: K, value: V[number]) {
 		let fullHashKey = get32BitHash(key);
 
 		lock(this.lock);
@@ -145,7 +132,7 @@ export default class SharedMap<K extends string | number, V extends Uint32Array 
 
 			this.ensureTable();
 			let slots = this.cachedSlots!;
-			let values = this.cachedValues!;
+			let values = this.cachedValues! as NumericArrayIO;
 			let capacity = this.cachedCapacity;
 			let mask = capacity - 1;
 			let keysBase = capacity;
@@ -181,14 +168,14 @@ export default class SharedMap<K extends string | number, V extends Uint32Array 
 		}
 	}
 
-	get(key: K): number | undefined {
+	get(key: K): V[number] | undefined {
 		let fullHashKey = get32BitHash(key);
 
 		lock(this.lock);
 		try {
 			this.ensureTable();
 			let slots = this.cachedSlots!;
-			let values = this.cachedValues!;
+			let values = this.cachedValues! as NumericArrayIO;
 			let capacity = this.cachedCapacity;
 			let mask = capacity - 1;
 			let keysBase = capacity;
@@ -244,10 +231,10 @@ export default class SharedMap<K extends string | number, V extends Uint32Array 
 	}
 
 	// Best-effort scan (see class note): not lock-guarded, so must not run concurrently with writes from another thread.
-	*[Symbol.iterator](): IterableIterator<[number, number]> {
+	*[Symbol.iterator](): IterableIterator<[number, V[number]]> {
 		this.ensureTable();
 		let slots = this.cachedSlots!;
-		let values = this.cachedValues!;
+		let values = this.cachedValues! as NumericArrayIO;
 		let capacity = this.cachedCapacity;
 		let keysBase = capacity;
 		for(let i = 0; i < capacity; i++) {
@@ -263,7 +250,7 @@ export default class SharedMap<K extends string | number, V extends Uint32Array 
 		this.ensureTable();
 		let oldTable = this.cachedTableMemory!;
 		let oldSlots = this.cachedSlots!;
-		let oldValues = this.cachedValues!;
+		let oldValues = this.cachedValues! as NumericArrayIO;
 		let oldCapacity = this.cachedCapacity;
 		let oldKeysBase = oldCapacity;
 		let length = Atomics.load(this.pointerMemory.data, LENGTH_INDEX);
@@ -272,9 +259,9 @@ export default class SharedMap<K extends string | number, V extends Uint32Array 
 		if((length + 1) * LOAD_DENOMINATOR > oldCapacity * LOAD_NUMERATOR) {
 			newCapacity = oldCapacity * 2;
 		}
-		let newTable = this.memory.allocUI32(newCapacity * 3);
+		let newTable = this.memory.allocUI32(this.tableLength(newCapacity));
 		let newSlots = newTable.data;
-		let newValues = this.makeValuesView(newTable, newCapacity);
+		let newValues = this.makeValuesView(newTable, newCapacity) as NumericArrayIO;
 		let mask = newCapacity - 1;
 		let newKeysBase = newCapacity;
 
@@ -317,7 +304,7 @@ export default class SharedMap<K extends string | number, V extends Uint32Array 
 	}
 }
 
-interface SharedMapConfig<V extends Uint32Array | Int32Array | Float32Array> {
+interface SharedMapConfig<V extends NumericArray> {
 	type?: TypedArrayConstructor<V>
 }
 interface SharedMapMemory {

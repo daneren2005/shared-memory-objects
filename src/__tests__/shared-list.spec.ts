@@ -345,6 +345,43 @@ describe('SharedList', () => {
 
 		expect(flat(list)).toEqual([5.5, -10, 4]);
 	});
+	it('with float64', () => {
+		let list = new SharedList(memory, {
+			type: Float64Array,
+		});
+
+		list.insert(5.5);
+		list.insert(Number.MAX_SAFE_INTEGER);
+		list.insert(-3.25);
+		expect(list.length).toEqual(3);
+
+		expect(flat(list)).toEqual([5.5, Number.MAX_SAFE_INTEGER, -3.25]);
+	});
+	it('with int64', () => {
+		let list = new SharedList(memory, {
+			type: BigInt64Array,
+		});
+
+		list.insert(5n);
+		list.insert(-10n);
+		list.insert(9223372036854775807n);
+		expect(list.length).toEqual(3);
+
+		expect(flat(list)).toEqual([5n, -10n, 9223372036854775807n]);
+		expect(list.deleteValue(-10n)).toEqual(true);
+		expect(flat(list)).toEqual([5n, 9223372036854775807n]);
+	});
+	it('with uint64', () => {
+		let list = new SharedList(memory, {
+			type: BigUint64Array,
+		});
+
+		list.insert(5n);
+		list.insert(18446744073709551615n);
+		expect(list.length).toEqual(2);
+
+		expect(flat(list)).toEqual([5n, 18446744073709551615n]);
+	});
 
 	it('with dataLength = 3', () => {
 		let list = new SharedList(memory, {

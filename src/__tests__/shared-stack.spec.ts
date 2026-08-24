@@ -79,6 +79,53 @@ describe('SharedStack', () => {
 		expect(stack.at(2)).toEqual(4.5);
 	});
 
+	it('float64 stores full-precision numbers across segments', () => {
+		let stack = new SharedStack(memory, {
+			type: Float64Array,
+		});
+
+		stack.push(10.5);
+		stack.push(Number.MAX_SAFE_INTEGER);
+		// Push enough to grow past the base segment and exercise the 64-bit segment stride
+		for(let i = 0; i < 50; i++) {
+			stack.push(i + 0.5);
+		}
+
+		expect(stack.at(0)).toEqual(10.5);
+		expect(stack.at(1)).toEqual(Number.MAX_SAFE_INTEGER);
+		expect(stack.at(10)).toEqual(8.5);
+		expect(stack.length).toEqual(52);
+	});
+	it('int64 stores bigint values across segments', () => {
+		let stack = new SharedStack(memory, {
+			type: BigInt64Array,
+		});
+
+		stack.push(-10n);
+		stack.push(9223372036854775807n);
+		for(let i = 0n; i < 50n; i++) {
+			stack.push(i);
+		}
+
+		expect(stack.at(0)).toEqual(-10n);
+		expect(stack.at(1)).toEqual(9223372036854775807n);
+		expect(stack.at(10)).toEqual(8n);
+		expect(stack.pop()).toEqual(49n);
+	});
+	it('uint64 stores large unsigned bigint values', () => {
+		let stack = new SharedStack(memory, {
+			type: BigUint64Array,
+		});
+
+		stack.push(18446744073709551615n);
+		stack.push(5n);
+
+		expect(stack.length).toEqual(2);
+		expect(flat(stack)).toEqual([18446744073709551615n, 5n]);
+		expect(stack.pop()).toEqual(5n);
+		expect(stack.pop()).toEqual(18446744073709551615n);
+	});
+
 	it('initializes with firstBlock', () => {
 		const hostBlock = memory.allocUI32(SharedStack.DEFAULT_ALLOCATE_COUNT * 2);
 		const stack = new SharedStack(memory, {

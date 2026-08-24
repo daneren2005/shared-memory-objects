@@ -1,27 +1,24 @@
 import type { SharedAllocatedMemory } from './allocated-memory';
 import AllocatedMemory from './allocated-memory';
-import type { TypedArrayConstructor } from './interfaces/typed-array-constructor';
 import type MemoryHeap from './memory-heap';
 import { getPointer, loadPointer, storePointer, storeRawPointer } from './utils/pointer';
-
-enum TYPE {
-	uint32,
-	int32,
-	float32,
-}
+import { getArrayTypeCode, getByteMultipler, makeArrayView, type NumericArray, type NumericArrayIO, type TypedArrayConstructor } from './utils/array-type';
 
 const VECTOR_INDEX = 0;
 const LENGTH_INDEX = 1;
 const BUFFER_LENGTH_INDEX = 2;
 const TYPE_INDEX = 3;
 const DEFAULT_SIZE = 4;
-export default class SharedVector<T extends Uint32Array | Int32Array | Float32Array = Uint32Array> implements Iterable<T> {
+export default class SharedVector<T extends NumericArray = Uint32Array> implements Iterable<T> {
 	static readonly ALLOCATE_COUNT = 4;
 	private memory: MemoryHeap;
 
 	// Pointer, List Length, Buffer Length, Type/DataLength
 	private firstBlock: AllocatedMemory;
 	private uint16Array: Uint16Array;
+	// u32 units per element: 1 for 32-bit types, 2 for 64-bit (float64/int64/uint64). Every data-block allocation scales
+	// by this; the typed view length stays in elements.
+	private cachedByteMultipler = 1;
 
 	get length(): number {
 		return Atomics.load(this.firstBlock.data, LENGTH_INDEX);
@@ -32,6 +29,9 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	}
 	private set type(value: number) {
 		Atomics.store(this.uint16Array, 0, value);
+	}
+	get byteMultipler(): number {
+		return this.cachedByteMultipler;
 	}
 	get dataLength(): number {
 		// Can technically be initialized by passing memory without actually every being called - need to make sure dataLength is always at least one
@@ -69,23 +69,14 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 
 			// Pre-allocating memory and setting up in specific memory location
 			if('type' in config || 'dataLength' in config) {
+				const typeCode = getArrayTypeCode(config.type ?? Uint32Array);
+				const byteMultipler = getByteMultipler(typeCode);
 				const bufferLength = config.bufferLength ?? DEFAULT_SIZE;
-				let dataBlock = memory.allocUI32(bufferLength * (config.dataLength ?? 1));
+				let dataBlock = memory.allocUI32(bufferLength * (config.dataLength ?? 1) * byteMultipler);
 				storePointer(this.firstBlock.data, VECTOR_INDEX, dataBlock.bufferPosition, dataBlock.bufferByteOffset);
 				this.bufferLength = bufferLength;
 				this.dataLength = (config.dataLength ?? 1);
-			}
-			if('type' in config) {
-				const type = config?.type ?? Uint32Array;
-				if(type === Uint32Array) {
-					this.type = TYPE.uint32;
-				// @ts-expect-error
-				} else if(type === Int32Array) {
-					this.type = TYPE.int32;
-				// @ts-expect-error
-				} else if(type === Float32Array) {
-					this.type = TYPE.float32;
-				}
+				this.type = typeCode;
 			}
 		} else {
 			this.firstBlock = memory.allocUI32(SharedVector.ALLOCATE_COUNT);
@@ -93,23 +84,15 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 
 			let dataLength = config?.dataLength ?? 1;
 			let bufferLength = config?.bufferLength ?? DEFAULT_SIZE;
-			let dataBlock = memory.allocUI32(bufferLength * dataLength);
+			let typeCode = getArrayTypeCode(config?.type ?? Uint32Array);
+			let dataBlock = memory.allocUI32(bufferLength * dataLength * getByteMultipler(typeCode));
 			storePointer(this.firstBlock.data, VECTOR_INDEX, dataBlock.bufferPosition, dataBlock.bufferByteOffset);
 			this.bufferLength = bufferLength;
-
-			const type = config?.type ?? Uint32Array;
-			if(type === Uint32Array) {
-				this.type = TYPE.uint32;
-			// @ts-expect-error
-			} else if(type === Int32Array) {
-				this.type = TYPE.int32;
-			// @ts-expect-error
-			} else if(type === Float32Array) {
-				this.type = TYPE.float32;
-			}
+			this.type = typeCode;
 			this.dataLength = dataLength;
 		}
 
+		this.cachedByteMultipler = getByteMultipler(this.type);
 		this.cachedPointer = this.firstBlock.data[0];
 		this.cachedFullDataBlock = this.getFullDataBlock();
 	}
@@ -123,31 +106,33 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		let dataBlock = this.getFullDataBlock();
 		return this.getDataBlock(dataBlock, index);
 	}
-	get(index: number, dataIndex = 0): number {
+	get(index: number, dataIndex = 0): T[number] {
 		if(dataIndex >= this.dataLength) {
 			throw new Error(`${dataIndex} is out of dataLength bounds ${this.dataLength}`);
 		} else if(index >= this.length || index < 0) {
 			throw new Error(`${index} is out of bounds ${this.length}`);
 		}
 
-		let dataBlock = this.getFullDataBlock();
+		let dataBlock = this.getFullDataBlock() as NumericArrayIO;
 		return dataBlock[index * this.dataLength + dataIndex];
 	}
 
-	push(values: number | Array<number>): number {
+	push(values: T[number] | Array<T[number]>): number {
 		let dataLength = this.dataLength;
-		const isSingleNumber = typeof values === 'number';
-		if(!isSingleNumber && values.length > dataLength) {
+		const isSingleValue = typeof values !== 'object';
+		if(!isSingleValue && values.length > dataLength) {
 			throw new Error(`Can't insert ${values.length} array into shared list of ${dataLength} dataLength`);
 		}
 
-		let dataBlock = this.getFullDataBlock();
+		let dataBlock = this.getFullDataBlock() as NumericArrayIO;
 		let currentLength = this.length;
 		let startIndex = dataLength * currentLength;
-		if(isSingleNumber) {
+		if(isSingleValue) {
 			dataBlock[startIndex] = values;
 		} else {
-			dataBlock.set(values, startIndex);
+			for(let i = 0; i < values.length; i++) {
+				dataBlock[startIndex + i] = values[i];
+			}
 		}
 
 		let newLength = Atomics.add(this.firstBlock.data, LENGTH_INDEX, 1) + 1;
@@ -166,9 +151,9 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	}
 
 	// Returns the first number irregardless of dataLength - faster way to pop if you don't care about the rest of the data block
-	popNumber(): number {
+	popNumber(): T[number] {
 		const oldLength = Atomics.sub(this.firstBlock.data, LENGTH_INDEX, 1);
-		const dataBlock = this.getFullDataBlock();
+		const dataBlock = this.getFullDataBlock() as NumericArrayIO;
 		return dataBlock[(oldLength - 1) * this.dataLength];
 	}
 
@@ -179,7 +164,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		}
 
 		let dataLength = this.dataLength;
-		let dataBlock = this.getFullDataBlock();
+		let dataBlock = this.getFullDataBlock() as NumericArrayIO;
 		for(let i = index; i < length; i++) {
 			for(let j = 0; j < dataLength; j++) {
 				dataBlock[i * dataLength + j] = dataBlock[(i + 1) * dataLength + j];
@@ -218,20 +203,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		let pointer = getPointer(pointerNumber);
 		let rawData = new AllocatedMemory(this.memory, pointer);
 
-		let data: T;
-		switch(this.type) {
-			case TYPE.int32:
-				data = new Int32Array(rawData.data.buffer, rawData.bufferByteOffset, this.dataLength * this.bufferLength) as T;
-				break;
-			case TYPE.uint32:
-				data = new Uint32Array(rawData.data.buffer, rawData.bufferByteOffset, this.dataLength * this.bufferLength) as T;
-				break;
-			case TYPE.float32:
-				data = new Float32Array(rawData.data.buffer, rawData.bufferByteOffset, this.dataLength * this.bufferLength) as T;
-				break;
-			default:
-				throw new Error(`Unknown data block type ${this.type}`);
-		}
+		let data = makeArrayView(this.type, rawData.data.buffer, rawData.bufferByteOffset, this.dataLength * this.bufferLength) as T;
 
 		this.cachedPointer = pointerNumber;
 		this.cachedFullDataBlock = data;
@@ -251,25 +223,13 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 		let oldPointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
 		let oldDataMemory = new AllocatedMemory(this.memory, oldPointer);
 		let oldDataBlock = this.getFullDataBlock();
-		let newDataBlock = this.memory.allocUI32(newBufferLength * dataLength);
+		let newDataBlock = this.memory.allocUI32(newBufferLength * dataLength * this.cachedByteMultipler);
 
-		let newData: T;
-		switch(this.type) {
-			case TYPE.int32:
-				newData = new Int32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * newBufferLength) as T;
-				break;
-			case TYPE.uint32:
-				newData = new Uint32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * newBufferLength) as T;
-				break;
-			case TYPE.float32:
-				newData = new Float32Array(newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * newBufferLength) as T;
-				break;
-			default:
-				throw new Error(`Unknown data block type ${this.type}`);
-		}
+		let newData = makeArrayView(this.type, newDataBlock.data.buffer, newDataBlock.bufferByteOffset, dataLength * newBufferLength) as T;
 
-		// Copy old buffer into new buffer
-		newData.set(oldDataBlock);
+		// newData and oldDataBlock are the same concrete view type, so a direct copy is valid; the cast only bridges the
+		// union's mutually-incompatible set() overloads (number vs bigint element types)
+		(newData as Float64Array).set(oldDataBlock as unknown as Float64Array);
 
 		const newPointer = newDataBlock.pointer;
 		storeRawPointer(this.firstBlock.data, VECTOR_INDEX, newPointer);
@@ -295,7 +255,7 @@ export default class SharedVector<T extends Uint32Array | Int32Array | Float32Ar
 	}
 }
 
-interface SharedVectorConfig<T extends Uint32Array | Int32Array | Float32Array> {
+interface SharedVectorConfig<T extends NumericArray> {
 	type?: TypedArrayConstructor<T>
 	dataLength?: number
 

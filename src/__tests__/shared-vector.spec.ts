@@ -144,6 +144,56 @@ describe('SharedVector', () => {
 		expect(vector.get(2)).toEqual(4.5);
 	});
 
+	it('float64 stores full-precision numbers', () => {
+		let vector = new SharedVector(memory, {
+			type: Float64Array,
+		});
+		expect(vector.byteMultipler).toEqual(2);
+
+		vector.push(10.5);
+		vector.push(Number.MAX_SAFE_INTEGER);
+		vector.push(-3.25);
+		// Grow past the initial buffer to make sure the 64-bit stride survives a resize
+		for(let i = 0; i < 20; i++) {
+			vector.push(i + 0.5);
+		}
+
+		expect(vector.get(0)).toEqual(10.5);
+		expect(vector.get(1)).toEqual(Number.MAX_SAFE_INTEGER);
+		expect(vector.get(2)).toEqual(-3.25);
+		expect(vector.get(10)).toEqual(7.5);
+	});
+	it('int64 stores bigint values', () => {
+		let vector = new SharedVector(memory, {
+			type: BigInt64Array,
+		});
+		expect(vector.byteMultipler).toEqual(2);
+
+		vector.push(5n);
+		vector.push(-10n);
+		vector.push(9223372036854775807n);
+		vector.push(-9223372036854775808n);
+
+		expect(vector.length).toEqual(4);
+		expect(flat(vector)).toEqual([5n, -10n, 9223372036854775807n, -9223372036854775808n]);
+		expect(vector.get(2)).toEqual(9223372036854775807n);
+	});
+	it('uint64 stores large unsigned bigint values', () => {
+		let vector = new SharedVector(memory, {
+			type: BigUint64Array,
+		});
+
+		vector.push(5n);
+		vector.push(18446744073709551615n);
+		for(let i = 0n; i < 20n; i++) {
+			vector.push(i);
+		}
+
+		expect(vector.get(0)).toEqual(5n);
+		expect(vector.get(1)).toEqual(18446744073709551615n);
+		expect(vector.get(12)).toEqual(10n);
+	});
+
 	it('initializes with firstBlock', () => {
 		const hostBlock = memory.allocUI32(SharedVector.ALLOCATE_COUNT * 2);
 		const vector = new SharedVector(memory, {

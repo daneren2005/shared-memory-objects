@@ -1,11 +1,11 @@
 import AllocatedMemory from './allocated-memory';
-import type { TypedArrayConstructor } from './interfaces/typed-array-constructor';
 import type MemoryHeap from './memory-heap';
 import { getPointer } from './utils/pointer';
+import { getArrayTypeCode, getByteMultipler, type NumericArray, type NumericArrayIO, type TypedArrayConstructor } from './utils/array-type';
 
 // Array with stable indexes and maximum contiguous memory sizes (necessary to fit large data sets into max 1MB buffers)
 // Can only do insert/deletions from a single thread - useful if other threads are known to be read-only
-export default class LocalPool<T extends Uint32Array | Int32Array | Float32Array | Float64Array = Uint32Array> implements Iterable<T> {
+export default class LocalPool<T extends NumericArray = Uint32Array> implements Iterable<T> {
 	private memory: MemoryHeap;
 	private pointers: Array<number> = [];
 	private recycledIndexes: Array<number> = [];
@@ -32,10 +32,7 @@ export default class LocalPool<T extends Uint32Array | Int32Array | Float32Array
 		this.maxChunkSize = maxLength;
 
 		this.typeConstructor = config.type;
-		// @ts-expect-error
-		if(this.typeConstructor === Float64Array) {
-			this.byteMultipler = 2;
-		}
+		this.byteMultipler = getByteMultipler(getArrayTypeCode(config.type));
 
 		let firstArray = memory.allocUI32(maxLength * dataLength * this.byteMultipler);
 		this.pointers.push(firstArray.pointer);
@@ -47,19 +44,19 @@ export default class LocalPool<T extends Uint32Array | Int32Array | Float32Array
 		let dataBlock = this.fullDataBlocks[Math.floor(index / this.maxChunkSize)];
 		return this.getDataBlock(dataBlock, index % this.maxChunkSize);
 	}
-	get(index: number, dataIndex = 0): number {
+	get(index: number, dataIndex = 0): T[number] {
 		const dataLength = this.dataLength;
 		if(dataIndex >= dataLength) {
 			throw new Error(`${dataIndex} is out of dataLength bounds ${dataLength}`);
 		}
 
-		let dataBlock = this.fullDataBlocks[Math.floor(index / this.maxChunkSize)];
+		let dataBlock = this.fullDataBlocks[Math.floor(index / this.maxChunkSize)] as NumericArrayIO;
 		return dataBlock[(index % this.maxChunkSize) * dataLength + dataIndex];
 	}
 
-	push(values: number | Array<number>): number {
-		const isSingleNumber = typeof values === 'number';
-		if(!isSingleNumber && values.length > this.dataLength) {
+	push(values: T[number] | Array<T[number]>): number {
+		const isSingleValue = typeof values !== 'object';
+		if(!isSingleValue && values.length > this.dataLength) {
 			throw new Error(`Can't insert ${values.length} array into shared list of ${this.dataLength} dataLength`);
 		}
 
@@ -67,8 +64,8 @@ export default class LocalPool<T extends Uint32Array | Int32Array | Float32Array
 		if(newIndex === undefined) {
 			newIndex = this.totalLength++;
 		}
-		
-		
+
+
 		let pointerIndex = Math.floor(newIndex / this.maxChunkSize);
 		if(pointerIndex >= this.pointers.length) {
 			let newArray = this.memory.allocUI32(this.maxChunkSize * this.dataLength * this.byteMultipler);
@@ -77,13 +74,15 @@ export default class LocalPool<T extends Uint32Array | Int32Array | Float32Array
 			this.fullDataBlocks[pointerIndex] = data;
 		}
 
-		let dataBlock = this.fullDataBlocks[pointerIndex];
+		let dataBlock = this.fullDataBlocks[pointerIndex] as NumericArrayIO;
 		let blockIndex = newIndex % this.maxChunkSize;
 		let startIndex = this.dataLength * blockIndex;
-		if(isSingleNumber) {
+		if(isSingleValue) {
 			dataBlock[startIndex] = values;
 		} else {
-			dataBlock.set(values, startIndex);
+			for(let i = 0; i < values.length; i++) {
+				dataBlock[startIndex + i] = values[i];
+			}
 		}
 
 		return newIndex;
@@ -152,7 +151,7 @@ export default class LocalPool<T extends Uint32Array | Int32Array | Float32Array
 	}
 }
 
-interface LocalPoolConfig<T extends Uint32Array | Int32Array | Float32Array | Float64Array> {
+interface LocalPoolConfig<T extends NumericArray> {
 	maxChunkSize?: number
 	type: TypedArrayConstructor<T>
 	dataLength?: number

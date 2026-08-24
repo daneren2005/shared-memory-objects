@@ -1,17 +1,10 @@
 import type { SharedAllocatedMemory } from './allocated-memory';
 import AllocatedMemory from './allocated-memory';
-import type { TypedArrayConstructor } from './interfaces/typed-array-constructor';
 import { lock, unlock } from './lock/simple-lock';
 import type MemoryHeap from './memory-heap';
 import SharedStack from './shared-stack';
 import { getPointer, loadRawPointer, storeRawPointer } from './utils/pointer';
-
-enum TYPE {
-	uint32,
-	int32,
-	float32,
-	float64,
-}
+import { getArrayTypeCode, getByteMultipler, makeArrayView, type NumericArray, type NumericArrayIO, type TypedArrayConstructor } from './utils/array-type';
 
 const LENGTH_INDEX = 0;
 const TYPE_INDEX = 1;
@@ -30,7 +23,7 @@ const DEFAULT_MAX_RECYCLED_LENGTH = 100_000;
 // The chunk pointers and the recycled indexes both live in SharedStacks, whose segments are never moved or freed once
 // published, so concurrent readers never touch memory that is being reclaimed.
 // https://plflib.org/colony.htm for future enhancements - it seems to be an optimized version of what we were aiming for with this
-export default class SharedPool<T extends Uint32Array | Int32Array | Float32Array | Float64Array = Uint32Array> implements Iterable<T> {
+export default class SharedPool<T extends NumericArray = Uint32Array> implements Iterable<T> {
 	static readonly ALLOCATE_COUNT = 6;
 	private memory: MemoryHeap;
 
@@ -132,24 +125,12 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 			});
 			storeRawPointer(this.firstBlock.data, RECYCLE_STACK_INDEX, this.recycleStack.pointer);
 
-			const type = config?.type ?? Uint32Array;
-			if(type === Uint32Array) {
-				this.type = TYPE.uint32;
-			// @ts-expect-error
-			} else if(type === Int32Array) {
-				this.type = TYPE.int32;
-			// @ts-expect-error
-			} else if(type === Float32Array) {
-				this.type = TYPE.float32;
-			// @ts-expect-error
-			} else if(type === Float64Array) {
-				this.type = TYPE.float64;
-			}
+			let typeCode = getArrayTypeCode(config?.type ?? Uint32Array);
+			this.type = typeCode;
 			this.dataLength = dataLength;
 			this.maxChunkSize = maxChunkSize;
 
-			// @ts-expect-error
-			let byteMultipler = type === Float64Array ? 2 : 1;
+			let byteMultipler = getByteMultipler(typeCode);
 			let firstArray = memory.allocUI32(maxChunkSize * dataLength * byteMultipler);
 			this.pointerStack.push(firstArray.pointer);
 		}
@@ -157,7 +138,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 		this.cachedType = this.uint16Array[0];
 		this.cachedDataLength = Math.max(1, this.uint16Array[1]);
 		this.cachedMaxChunkSize = this.firstBlock.data[MAX_CHUNK_SIZE_INDEX];
-		this.cachedByteMultipler = this.cachedType === TYPE.float64 ? 2 : 1;
+		this.cachedByteMultipler = getByteMultipler(this.cachedType);
 		this.maxLength = this.cachedMaxChunkSize * this.pointerStack.maxLength;
 
 		this.growLock = new Int32Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + GROW_LOCK_INDEX * Uint32Array.BYTES_PER_ELEMENT, 1);
@@ -167,20 +148,20 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 		let dataBlock = this.getFullDataBlock(index);
 		return this.getDataBlock(dataBlock, index % this.cachedMaxChunkSize);
 	}
-	get(index: number, dataIndex = 0): number {
+	get(index: number, dataIndex = 0): T[number] {
 		const dataLength = this.cachedDataLength;
 		if(dataIndex >= dataLength) {
 			throw new Error(`${dataIndex} is out of dataLength bounds ${dataLength}`);
 		}
 
-		let dataBlock = this.getFullDataBlock(index);
+		let dataBlock = this.getFullDataBlock(index) as NumericArrayIO;
 		return dataBlock[(index % this.cachedMaxChunkSize) * dataLength + dataIndex];
 	}
 
-	push(values: number | Array<number>): number {
+	push(values: T[number] | Array<T[number]>): number {
 		let dataLength = this.cachedDataLength;
-		const isSingleNumber = typeof values === 'number';
-		if(!isSingleNumber && values.length > dataLength) {
+		const isSingleValue = typeof values !== 'object';
+		if(!isSingleValue && values.length > dataLength) {
 			throw new Error(`Can't insert ${values.length} array into shared list of ${dataLength} dataLength`);
 		}
 
@@ -191,12 +172,14 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 			newIndex = Atomics.add(this.firstBlock.data, LENGTH_INDEX, 1);
 		}
 
-		let dataBlock = this.getFullDataBlock(newIndex);
+		let dataBlock = this.getFullDataBlock(newIndex) as NumericArrayIO;
 		let startIndex = dataLength * (newIndex % this.cachedMaxChunkSize);
-		if(isSingleNumber) {
+		if(isSingleValue) {
 			dataBlock[startIndex] = values;
 		} else {
-			dataBlock.set(values, startIndex);
+			for(let i = 0; i < values.length; i++) {
+				dataBlock[startIndex + i] = values[i];
+			}
 		}
 
 		return newIndex;
@@ -259,23 +242,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 		let array = new AllocatedMemory(this.memory, getPointer(this.pointerStack.at(pointerIndex)));
 
 		let blockLength = this.cachedDataLength * this.cachedMaxChunkSize;
-		let data: T;
-		switch(this.cachedType) {
-			case TYPE.int32:
-				data = new Int32Array(array.data.buffer, array.bufferByteOffset, blockLength) as T;
-				break;
-			case TYPE.uint32:
-				data = new Uint32Array(array.data.buffer, array.bufferByteOffset, blockLength) as T;
-				break;
-			case TYPE.float32:
-				data = new Float32Array(array.data.buffer, array.bufferByteOffset, blockLength) as T;
-				break;
-			case TYPE.float64:
-				data = new Float64Array(array.data.buffer, array.bufferByteOffset, blockLength) as T;
-				break;
-			default:
-				throw new Error(`Unknown data block type ${this.cachedType}`);
-		}
+		let data = makeArrayView(this.cachedType, array.data.buffer, array.bufferByteOffset, blockLength) as T;
 
 		this.cachedFullDataBlock[pointerIndex] = data;
 		return data;
@@ -305,7 +272,7 @@ export default class SharedPool<T extends Uint32Array | Int32Array | Float32Arra
 	}
 }
 
-interface SharedPoolConfig<T extends Uint32Array | Int32Array | Float32Array | Float64Array> {
+interface SharedPoolConfig<T extends NumericArray> {
 	maxChunkSize?: number
 	maxLength?: number
 	maxRecycledLength?: number

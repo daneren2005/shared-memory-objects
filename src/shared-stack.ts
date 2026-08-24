@@ -1,15 +1,9 @@
 import type { SharedAllocatedMemory } from './allocated-memory';
 import AllocatedMemory from './allocated-memory';
-import type { TypedArrayConstructor } from './interfaces/typed-array-constructor';
 import { lock, unlock } from './lock/simple-lock';
 import type MemoryHeap from './memory-heap';
 import { getPointer, storePointer } from './utils/pointer';
-
-enum TYPE {
-	uint32,
-	int32,
-	float32,
-}
+import { getArrayTypeCode, getByteMultipler, makeArrayView, type NumericArray, type NumericArrayIO, type TypedArrayConstructor } from './utils/array-type';
 
 const LENGTH_INDEX = 0;
 const TYPE_INDEX = 1;
@@ -43,17 +37,19 @@ const VERSION_STEP = 1 << LEN_BITS;
 // sequence and bail out (retry) unless it has the parity they need, then CAS the length; because the versioned CAS
 // rejects any intervening op, the sequence read stays valid all the way through the publish store below.
 
-export default class SharedStack<T extends Uint32Array | Int32Array | Float32Array = Uint32Array> implements Iterable<number> {
+export default class SharedStack<T extends NumericArray = Uint32Array> implements Iterable<T[number]> {
 	static readonly BASE_ALLOCATE_COUNT = 8;
 	static readonly DEFAULT_ALLOCATE_COUNT = this.BASE_ALLOCATE_COUNT + DEFAULT_MAX_SEGMENTS;
 
 	// Largest power-of-two segment length whose block (segmentLength data slots plus an equal run of publish sequences)
 	// still fits in a single buffer. Segments double until they reach this, then stay flat so a segment can always be
-	// allocated in one contiguous block. maxAllocationLength is MemoryHeap.maxAllocationLength.
-	static getMaxSegmentLength(maxAllocationLength: number, baseSegmentLength = DEFAULT_BASE_SEGMENT_LENGTH): number {
+	// allocated in one contiguous block. maxAllocationLength is MemoryHeap.maxAllocationLength. byteMultipler is the u32
+	// units per data slot (2 for 64-bit types), so a length-L segment's block is L * byteMultipler data u32s + L sequence u32s.
+	static getMaxSegmentLength(maxAllocationLength: number, baseSegmentLength = DEFAULT_BASE_SEGMENT_LENGTH, byteMultipler = 1): number {
 		let segmentLength = baseSegmentLength;
-		// A segment of length L needs a block of 2L u32s, so the next double only fits while 2 * (2L) <= maxAllocationLength
-		while(segmentLength * 4 <= maxAllocationLength) {
+		// A length-L segment needs a block of L * (byteMultipler + 1) u32s, so the next double fits while
+		// 2L * (byteMultipler + 1) <= maxAllocationLength
+		while(segmentLength * 2 * (byteMultipler + 1) <= maxAllocationLength) {
 			segmentLength *= 2;
 		}
 		return segmentLength;
@@ -108,6 +104,9 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 	private cachedMaxSegmentLength = 0;
 	private cachedCapSegmentCount = 0;
 	private cachedGeometricCapacity = 0;
+	// u32 units per data slot: 1 for 32-bit types, 2 for 64-bit (float64/int64/uint64). A segment block is
+	// segmentLength * cachedByteMultipler data u32s followed by segmentLength sequence u32s.
+	private cachedByteMultipler = 1;
 
 	get length(): number {
 		return Atomics.load(this.firstBlock.data, LENGTH_INDEX) & LEN_MASK;
@@ -177,8 +176,9 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 				this.ownsFirstBlock = true;
 			}
 		} else {
+			let byteMultipler = getByteMultipler(getArrayTypeCode(config?.type ?? Uint32Array));
 			let baseSegmentLength = config?.baseSegmentLength ?? DEFAULT_BASE_SEGMENT_LENGTH;
-			let maxSegmentLength = this.resolveMaxSegmentLength(baseSegmentLength, config?.maxSegmentLength);
+			let maxSegmentLength = this.resolveMaxSegmentLength(baseSegmentLength, config?.maxSegmentLength, byteMultipler);
 			let maxSegments = this.resolveMaxSegments(config?.maxLength, baseSegmentLength, maxSegmentLength);
 
 			this.firstBlock = memory.allocUI32(SharedStack.BASE_ALLOCATE_COUNT + maxSegments);
@@ -189,6 +189,7 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 		}
 
 		this.growLock = new Int32Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + GROW_LOCK_INDEX * Uint32Array.BYTES_PER_ELEMENT, 1);
+		this.cachedByteMultipler = getByteMultipler(this.type);
 		this.cachedBaseSegmentLength = this.baseSegmentLength;
 		this.cachedMaxSegmentLength = this.maxSegmentLength;
 		// Segments 0..(K-1) double geometrically up to the cap, where K = log2(cap / base) + 1
@@ -203,8 +204,8 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 
 	// Cap on segment length: the largest a single buffer can hold, optionally lowered to a caller-requested value (floored
 	// to a power-of-two multiple of the base). Beyond this segments stop doubling and stay flat so each still fits a buffer.
-	private resolveMaxSegmentLength(baseSegmentLength: number, requested?: number): number {
-		let cap = SharedStack.getMaxSegmentLength(this.memory.maxAllocationLength, baseSegmentLength);
+	private resolveMaxSegmentLength(baseSegmentLength: number, requested?: number, byteMultipler = 1): number {
+		let cap = SharedStack.getMaxSegmentLength(this.memory.maxAllocationLength, baseSegmentLength, byteMultipler);
 		if(requested) {
 			let floored = baseSegmentLength;
 			while(floored * 2 <= requested) {
@@ -227,29 +228,21 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 	}
 
 	private initialize(config?: SharedStackConfig<T>) {
+		let typeCode = getArrayTypeCode(config?.type ?? Uint32Array);
+		let byteMultipler = getByteMultipler(typeCode);
 		let baseSegmentLength = config?.baseSegmentLength ?? DEFAULT_BASE_SEGMENT_LENGTH;
-		let maxSegmentLength = this.resolveMaxSegmentLength(baseSegmentLength, config?.maxSegmentLength);
-		// Each segment block holds the data slots followed by an equal-length region of publish sequences
-		let firstSegmentBlock = this.memory.allocUI32(baseSegmentLength * 2);
+		let maxSegmentLength = this.resolveMaxSegmentLength(baseSegmentLength, config?.maxSegmentLength, byteMultipler);
+		// Each segment block holds the data slots (byteMultipler u32s each) followed by one publish sequence u32 per slot
+		let firstSegmentBlock = this.memory.allocUI32(baseSegmentLength * (byteMultipler + 1));
 		storePointer(this.firstBlock.data, SEGMENT_START_INDEX, firstSegmentBlock.bufferPosition, firstSegmentBlock.bufferByteOffset);
 		this.baseSegmentLength = baseSegmentLength;
 		this.maxSegmentLength = maxSegmentLength;
 		this.maxSegments = this.resolveMaxSegments(config?.maxLength, baseSegmentLength, maxSegmentLength);
 		this.segmentCount = 1;
-
-		const type = config?.type ?? Uint32Array;
-		if(type === Uint32Array) {
-			this.type = TYPE.uint32;
-		// @ts-expect-error
-		} else if(type === Int32Array) {
-			this.type = TYPE.int32;
-		// @ts-expect-error
-		} else if(type === Float32Array) {
-			this.type = TYPE.float32;
-		}
+		this.type = typeCode;
 	}
 
-	at(index: number): number {
+	at(index: number): T[number] {
 		let length = this.length;
 		if(index >= length || index < 0) {
 			throw new Error(`${index} is out of bounds ${length}`);
@@ -270,10 +263,10 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 			localIndex = offset - extra * maxSegmentLength;
 		}
 		let segment = this.cachedSegments[segmentIndex] ?? this.getSegment(segmentIndex);
-		return segment[localIndex];
+		return (segment as NumericArrayIO)[localIndex];
 	}
 
-	push(value: number): number {
+	push(value: T[number]): number {
 		let data = this.firstBlock.data;
 		let geometricCapacity = this.cachedGeometricCapacity;
 		// eslint-disable-next-line no-constant-condition
@@ -312,7 +305,7 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 				continue;
 			}
 
-			segment[localIndex] = value;
+			(segment as NumericArrayIO)[localIndex] = value;
 			// Publish: bump to odd (full). Safe as a plain store - no other op can claim this slot until the length comes
 			// back down to it, which can't happen (its popper is gated on an odd sequence) until this store lands
 			Atomics.store(sequences, localIndex, sequence + 1);
@@ -320,7 +313,7 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 		}
 	}
 
-	pop(): number | undefined {
+	pop(): T[number] | undefined {
 		let data = this.firstBlock.data;
 		let geometricCapacity = this.cachedGeometricCapacity;
 		// eslint-disable-next-line no-constant-condition
@@ -358,7 +351,7 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 				continue;
 			}
 
-			let value = segment[localIndex];
+			let value = (segment as NumericArrayIO)[localIndex] as T[number];
 			// Release the slot: bump to even (empty) so a later push may reuse it
 			Atomics.store(sequences, localIndex, sequence + 1);
 			return value;
@@ -402,7 +395,7 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 		let segment = this.getSegment(segmentIndex);
 		let segmentDataIndex = 0;
 		for(let i = 0; i < totalDataEntries; i++) {
-			yield segment[segmentDataIndex];
+			yield (segment as NumericArrayIO)[segmentDataIndex] as T[number];
 			segmentDataIndex++;
 			if(segmentDataIndex >= segmentLength) {
 				segmentIndex++;
@@ -429,8 +422,8 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 			try {
 				// Re-check under the lock: another thread may have already appended the segment while we were waiting
 				if(segmentIndex >= this.segmentCount) {
-					// Double length: the data slots followed by their publish sequences (calloc-zeroed = 0 = empty)
-					segmentDataBlock = this.memory.allocUI32(segmentLength * 2);
+					// Data slots (byteMultipler u32s each) followed by one publish sequence u32 per slot (calloc-zeroed = 0 = empty)
+					segmentDataBlock = this.memory.allocUI32(segmentLength * (this.cachedByteMultipler + 1));
 					storePointer(this.firstBlock.data, SEGMENT_START_INDEX + segmentIndex, segmentDataBlock.bufferPosition, segmentDataBlock.bufferByteOffset);
 					Atomics.add(this.firstBlock.data, SEGMENT_COUNT_INDEX, 1);
 				}
@@ -445,22 +438,9 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 			segmentDataBlock = new AllocatedMemory(this.memory, pointer);
 		}
 
-		let data: T;
-		switch(this.type) {
-			case TYPE.int32:
-				data = new Int32Array(segmentDataBlock.data.buffer, segmentDataBlock.bufferByteOffset, segmentLength) as T;
-				break;
-			case TYPE.uint32:
-				data = new Uint32Array(segmentDataBlock.data.buffer, segmentDataBlock.bufferByteOffset, segmentLength) as T;
-				break;
-			case TYPE.float32:
-				data = new Float32Array(segmentDataBlock.data.buffer, segmentDataBlock.bufferByteOffset, segmentLength) as T;
-				break;
-			default:
-				throw new Error(`Unknown data block type ${this.type}`);
-		}
-		// Publish sequences live in the second half of the block, always as Int32 regardless of the data type
-		let sequenceByteOffset = segmentDataBlock.bufferByteOffset + segmentLength * Uint32Array.BYTES_PER_ELEMENT;
+		let data = makeArrayView(this.type, segmentDataBlock.data.buffer, segmentDataBlock.bufferByteOffset, segmentLength) as T;
+		// Publish sequences live after the data region (segmentLength * byteMultipler u32s), always as Int32 regardless of type
+		let sequenceByteOffset = segmentDataBlock.bufferByteOffset + segmentLength * this.cachedByteMultipler * Uint32Array.BYTES_PER_ELEMENT;
 		this.cachedSequences[segmentIndex] = new Int32Array(segmentDataBlock.data.buffer, sequenceByteOffset, segmentLength);
 		this.cachedSegments[segmentIndex] = data;
 
@@ -486,7 +466,7 @@ export default class SharedStack<T extends Uint32Array | Int32Array | Float32Arr
 	}
 }
 
-interface SharedStackConfig<T extends Uint32Array | Int32Array | Float32Array> {
+interface SharedStackConfig<T extends NumericArray> {
 	type?: TypedArrayConstructor<T>
 
 	baseSegmentLength?: number

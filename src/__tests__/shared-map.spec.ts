@@ -185,6 +185,47 @@ describe('SharedMap', () => {
 			expect(map.get(42)).toEqual(42.5);
 		});
 
+		it('stores full-precision values with Float64Array', () => {
+			let map = new SharedMap<number, Float64Array>(memory, { type: Float64Array });
+			map.set(1, Number.MAX_SAFE_INTEGER);
+			map.set(2, -3.25);
+			expect(map.get(1)).toEqual(Number.MAX_SAFE_INTEGER);
+			expect(map.get(2)).toEqual(-3.25);
+			// Survives a rehash with the 64-bit stride preserved
+			for(let i = 10; i < 60; i++) {
+				map.set(i, i + 0.5);
+			}
+			expect(map.get(1)).toEqual(Number.MAX_SAFE_INTEGER);
+			expect(map.get(42)).toEqual(42.5);
+		});
+
+		it('stores bigint values with BigInt64Array', () => {
+			let map = new SharedMap<number, BigInt64Array>(memory, { type: BigInt64Array });
+			map.set(1, -100n);
+			map.set(2, 9223372036854775807n);
+			map.set(3, -9223372036854775808n);
+			expect(map.get(1)).toEqual(-100n);
+			expect(map.get(2)).toEqual(9223372036854775807n);
+			expect(map.get(3)).toEqual(-9223372036854775808n);
+			// Survives a rehash with the value type preserved
+			for(let i = 10; i < 60; i++) {
+				map.set(i, BigInt(i));
+			}
+			expect(map.get(2)).toEqual(9223372036854775807n);
+			expect(map.get(42)).toEqual(42n);
+		});
+
+		it('stores large unsigned bigint values with BigUint64Array', () => {
+			let map = new SharedMap<number, BigUint64Array>(memory, { type: BigUint64Array });
+			map.set(1, 18446744073709551615n);
+			map.set(2, 0n);
+			expect(map.get(1)).toEqual(18446744073709551615n);
+			expect(map.get(2)).toEqual(0n);
+			expect(map.has(1)).toEqual(true);
+			expect(map.delete(1)).toEqual(true);
+			expect(map.get(1)).toBeUndefined();
+		});
+
 		it('iterates every live entry exactly once', () => {
 			let map = new SharedMap<number>(memory);
 			for(let i = 0; i < 50; i++) {
