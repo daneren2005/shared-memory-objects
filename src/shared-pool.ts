@@ -78,7 +78,7 @@ export default class SharedPool<T extends NumericArray = Uint32Array> implements
 	get usedMemory(): number {
 		let total = this.firstBlock.usedMemory;
 		for(let pointer of this.pointerStack) {
-			total += new AllocatedMemory(this.memory, getPointer(pointer)).usedMemory;
+			total += new AllocatedMemory(this.memory, getPointer(pointer, this.memory.positionBits)).usedMemory;
 		}
 		return total + this.pointerStack.usedMemory + this.recycleStack.usedMemory;
 	}
@@ -90,10 +90,10 @@ export default class SharedPool<T extends NumericArray = Uint32Array> implements
 			this.firstBlock = new AllocatedMemory(memory, config.firstBlock);
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
 			this.pointerStack = new SharedStack(memory, {
-				firstBlock: getPointer(loadRawPointer(this.firstBlock.data, POINTER_STACK_INDEX)),
+				firstBlock: getPointer(loadRawPointer(this.firstBlock.data, POINTER_STACK_INDEX), memory.positionBits),
 			});
 			this.recycleStack = new SharedStack(memory, {
-				firstBlock: getPointer(loadRawPointer(this.firstBlock.data, RECYCLE_STACK_INDEX)),
+				firstBlock: getPointer(loadRawPointer(this.firstBlock.data, RECYCLE_STACK_INDEX), memory.positionBits),
 			});
 		} else {
 			let dataLength = config?.dataLength ?? 1;
@@ -239,7 +239,7 @@ export default class SharedPool<T extends NumericArray = Uint32Array> implements
 			}
 		}
 
-		let array = new AllocatedMemory(this.memory, getPointer(this.pointerStack.at(pointerIndex)));
+		let array = new AllocatedMemory(this.memory, getPointer(this.pointerStack.at(pointerIndex), this.memory.positionBits));
 
 		let blockLength = this.cachedDataLength * this.cachedMaxChunkSize;
 		let data = makeArrayView(this.cachedType, array.data.buffer, array.bufferByteOffset, blockLength) as T;
@@ -258,7 +258,7 @@ export default class SharedPool<T extends NumericArray = Uint32Array> implements
 		this.recycleStack.free();
 
 		for(let pointer of this.pointerStack) {
-			let memory = new AllocatedMemory(this.memory, getPointer(pointer));
+			let memory = new AllocatedMemory(this.memory, getPointer(pointer, this.memory.positionBits));
 			memory.free();
 		}
 		this.pointerStack.free();

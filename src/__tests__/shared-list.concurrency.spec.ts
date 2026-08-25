@@ -19,7 +19,7 @@ describe('SharedList concurrency windows', () => {
 		let { bufferPosition, bufferByteOffset } = list.getSharedMemory().firstBlock;
 		return {
 			view: new Uint32Array(memory.buffers[bufferPosition].buf, bufferByteOffset, 4),
-			sentinelPointer: createPointer(bufferPosition, bufferByteOffset),
+			sentinelPointer: createPointer(bufferPosition, bufferByteOffset, memory.positionBits),
 		};
 	}
 

@@ -51,7 +51,7 @@ export function serializeObjectToMemory<T extends object>(heap: MemoryHeap, obje
 }
 
 export function createObjectFromPointer<T extends object>(heap: MemoryHeap, pointer: number) {
-	let memory = new AllocatedMemory(heap, getPointer(pointer));
+	let memory = new AllocatedMemory(heap, getPointer(pointer, heap.positionBits));
 	return createObjectFromMemory<T>(memory);
 }
 export function createObjectFromMemory<T extends object>(memory: AllocatedMemory): T {

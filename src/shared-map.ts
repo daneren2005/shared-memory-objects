@@ -68,7 +68,7 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 			return;
 		}
 
-		let table = new AllocatedMemory(this.memory, getPointer(pointer));
+		let table = new AllocatedMemory(this.memory, getPointer(pointer, this.memory.positionBits));
 		this.cachedTableMemory = table;
 		this.cachedSlots = table.data;
 		this.cachedValues = this.makeValuesView(table, capacity);
@@ -97,6 +97,16 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 	}
 	get type(): number {
 		return this.cachedType;
+	}
+	// Metadata block plus the single table allocation the map currently points at.
+	get usedMemory(): number {
+		lock(this.lock);
+		try {
+			this.ensureTable();
+			return this.pointerMemory.usedMemory + this.cachedTableMemory!.usedMemory;
+		} finally {
+			unlock(this.lock);
+		}
 	}
 
 	constructor(memory: MemoryHeap, config?: SharedMapConfig<V> | SharedMapMemory) {

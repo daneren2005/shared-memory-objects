@@ -115,15 +115,23 @@ describe('MemoryHeap', () => {
 		}
 	});
 
-	it('Block creating with bufferSize greater than 1MB', () => {
+	it('Block creating with bufferSize greater than the addressable max throws', () => {
 		let error: Error | null = null;
 		try {
-			void new MemoryHeap({ bufferSize: Math.pow(2, 30) });
+			// Buffers up to 2^31 are addressable now (the split shrinks to fit); beyond that leaves no position bits
+			void new MemoryHeap({ bufferSize: Math.pow(2, 32) });
 		} catch(e) {
 			error = e as Error;
 		}
 
 		expect(error).not.toBeNull();
+	});
+
+	it('Creating with a >1MB bufferSize is now allowed (dynamic pointer split)', () => {
+		let heap = new MemoryHeap({ bufferSize: Math.pow(2, 23) });
+		// 8MB buffers -> 23 offset bits, 9 position bits -> 512 buffers, still 4GB addressable
+		expect(heap.positionBits).toEqual(9);
+		expect(heap.bufferSize).toEqual(Math.pow(2, 23));
 	});
 
 	it('Another thread updating old freed memory should not break', () => {

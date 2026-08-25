@@ -1,7 +1,7 @@
 import type { SharedAllocatedMemory } from './allocated-memory';
 import AllocatedMemory from './allocated-memory';
 import type MemoryHeap from './memory-heap';
-import { loadPointer, loadRawPointer, POSITION_BIT_COUNT, replaceRawPointer, storeRawPointer } from './utils/pointer';
+import { loadPointer, loadRawPointer, replaceRawPointer, storeRawPointer } from './utils/pointer';
 import { getArrayTypeCode, getByteMultipler, isBigIntType, isFloatType, makeArrayView, type NumericArray, type NumericArrayIO, type TypedArrayConstructor } from './utils/array-type';
 
 // Lock-free singly-linked list. firstBlock doubles as an immortal sentinel node whose next pointer (index 0) is the head.
@@ -17,12 +17,15 @@ const TAIL_INDEX = 1;
 const LENGTH_INDEX = 2;
 const NODE_NEXT_INDEX = 0;
 const NODE_DELETED_INDEX = 1;
-// A pointer packs the buffer position in its low bits and the byte offset in the high bits (see utils/pointer)
-const POSITION_MASK = (1 << POSITION_BIT_COUNT) - 1;
+// A pointer packs the buffer position in its low `positionBits` bits and the byte offset in the high bits (see
+// utils/pointer). The split is per-heap, so it is read from the heap and cached rather than a module constant.
 export default class SharedList<T extends NumericArray = Uint32Array> implements Iterable<SharedListIterable<T>> {
 	static readonly ALLOCATE_COUNT = FIRST_BLOCK_RECORD_KEEPING_COUNT;
 
 	private memory: MemoryHeap;
+	// Per-heap pointer split, cached from the heap. Hoisted into locals inside the hot loops below.
+	private positionBits: number;
+	private positionMask: number;
 	/* First block (also the sentinel node - index 0 is its next pointer = list head)
 		32 index 0
 		uint16 0 - head buffer position    | sentinel.next
@@ -66,11 +69,11 @@ export default class SharedList<T extends NumericArray = Uint32Array> implements
 	// allocated until a compact()/clear() reclaims them).
 	get usedMemory(): number {
 		let total = this.firstBlock.usedMemory;
-		let { bufferPosition, bufferByteOffset } = loadPointer(this.firstBlock.data, HEAD_INDEX);
+		let { bufferPosition, bufferByteOffset } = loadPointer(this.firstBlock.data, HEAD_INDEX, this.positionBits);
 		while(bufferByteOffset) {
 			let node = new AllocatedMemory(this.memory, { bufferPosition, bufferByteOffset });
 			total += node.usedMemory;
-			({ bufferPosition, bufferByteOffset } = loadPointer(node.data, NODE_NEXT_INDEX));
+			({ bufferPosition, bufferByteOffset } = loadPointer(node.data, NODE_NEXT_INDEX, this.positionBits));
 		}
 		return total;
 	}
@@ -90,6 +93,8 @@ export default class SharedList<T extends NumericArray = Uint32Array> implements
 
 	constructor(memory: MemoryHeap, config?: SharedListConfig<T> | SharedListMemory) {
 		this.memory = memory;
+		this.positionBits = memory.positionBits;
+		this.positionMask = (1 << this.positionBits) - 1;
 
 		if(config && 'firstBlock' in config) {
 			// TODO: How to handle referencing memory we don't have access to yet because buffer not synced from worker?
@@ -145,15 +150,17 @@ export default class SharedList<T extends NumericArray = Uint32Array> implements
 
 		// Michael-Scott enqueue: link the node onto tail.next BEFORE swinging the tail hint, so a committed node is never
 		// invisible to a concurrent traversal. The tail hint may lag by one node; enqueuers help advance it.
+		let positionBits = this.positionBits;
+		let positionMask = this.positionMask;
 		// eslint-disable-next-line no-constant-condition
 		while(true) {
 			let tailPointer = loadRawPointer(this.firstBlock.data, TAIL_INDEX);
-			let view = this.getBufferView(tailPointer & POSITION_MASK);
+			let view = this.getBufferView(tailPointer & positionMask);
 			// Tail node lives in a buffer this thread hasn't synced yet - retry until it appears
 			if(!view) {
 				continue;
 			}
-			let tailNextIndex = ((tailPointer >>> POSITION_BIT_COUNT) >>> 2) + NODE_NEXT_INDEX;
+			let tailNextIndex = ((tailPointer >>> positionBits) >>> 2) + NODE_NEXT_INDEX;
 			let nextPointer = Atomics.load(view, tailNextIndex);
 
 			// Re-check the hint hasn't moved out from under us before acting on what we read
@@ -228,15 +235,17 @@ export default class SharedList<T extends NumericArray = Uint32Array> implements
 		let prevPointer = this.firstBlock.pointer;
 		let prevView = this.firstBlock.data;
 		let prevNextIndex = NODE_NEXT_INDEX;
+		let positionBits = this.positionBits;
+		let positionMask = this.positionMask;
 		let nextPointer = loadRawPointer(prevView, prevNextIndex);
 		while(nextPointer) {
-			let position = nextPointer & POSITION_MASK;
+			let position = nextPointer & positionMask;
 			let memPool = this.memory.buffers[position];
 			if(!memPool) {
 				break;
 			}
 			let view = this.getBufferView(position)!;
-			let byteOffset = nextPointer >>> POSITION_BIT_COUNT;
+			let byteOffset = nextPointer >>> positionBits;
 			let nodeIndex = byteOffset >>> 2;
 			let followingPointer = Atomics.load(view, nodeIndex + NODE_NEXT_INDEX);
 
@@ -279,9 +288,11 @@ export default class SharedList<T extends NumericArray = Uint32Array> implements
 		storeRawPointer(this.firstBlock.data, TAIL_INDEX, this.firstBlock.pointer);
 
 		let liveItems = 0;
+		let positionBits = this.positionBits;
+		let positionMask = this.positionMask;
 		let nextBlockPointer = firstBlockPointer;
 		while(nextBlockPointer) {
-			let position = nextBlockPointer & POSITION_MASK;
+			let position = nextBlockPointer & positionMask;
 			let memPool = this.memory.buffers[position];
 			// Short circuit iterations if we can't access memory
 			if(!memPool) {
@@ -289,7 +300,7 @@ export default class SharedList<T extends NumericArray = Uint32Array> implements
 			}
 
 			let view = this.getBufferView(position)!;
-			let byteOffset = nextBlockPointer >>> POSITION_BIT_COUNT;
+			let byteOffset = nextBlockPointer >>> positionBits;
 			let nodeIndex = byteOffset >>> 2;
 			nextBlockPointer = Atomics.load(view, nodeIndex + NODE_NEXT_INDEX);
 
@@ -309,15 +320,17 @@ export default class SharedList<T extends NumericArray = Uint32Array> implements
 
 	*[Symbol.iterator]() {
 		let currentIndex = 0;
+		let positionBits = this.positionBits;
+		let positionMask = this.positionMask;
 		let nextPointer = loadRawPointer(this.firstBlock.data, HEAD_INDEX);
 		while(nextPointer) {
-			let position = nextPointer & POSITION_MASK;
+			let position = nextPointer & positionMask;
 			let view = this.getBufferView(position);
 			// Short circuit iterations if we can't access memory
 			if(!view) {
 				return;
 			}
-			let byteOffset = nextPointer >>> POSITION_BIT_COUNT;
+			let byteOffset = nextPointer >>> positionBits;
 			let nodeIndex = byteOffset >>> 2;
 			nextPointer = Atomics.load(view, nodeIndex + NODE_NEXT_INDEX);
 
@@ -385,14 +398,14 @@ export default class SharedList<T extends NumericArray = Uint32Array> implements
 	}
 
 	free() {
-		let { bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(this.firstBlock.data, HEAD_INDEX);
+		let { bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(this.firstBlock.data, HEAD_INDEX, this.positionBits);
 		while(nextBlockByteOffset) {
 			let allocatedMemory = new AllocatedMemory(this.memory, {
 				bufferPosition: nextBlockPosition,
 				bufferByteOffset: nextBlockByteOffset,
 			});
 
-			({ bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(allocatedMemory.data, NODE_NEXT_INDEX));
+			({ bufferPosition: nextBlockPosition, bufferByteOffset: nextBlockByteOffset } = loadPointer(allocatedMemory.data, NODE_NEXT_INDEX, this.positionBits));
 
 			if(this.onDelete && !Atomics.load(allocatedMemory.data, NODE_DELETED_INDEX)) {
 				this.onDelete(this.getDataBlock(allocatedMemory.data.buffer, allocatedMemory.data.byteOffset));

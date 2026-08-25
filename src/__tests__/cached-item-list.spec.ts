@@ -77,7 +77,7 @@ describe('CachedItemList', () => {
 
 class StringList extends CachedItemList<SharedString> {
 	initItem(pointer: number) {
-		return new SharedString(this.heap, getPointer(pointer));
+		return new SharedString(this.heap, getPointer(pointer, this.heap.positionBits));
 	}
 
 	get _cache() {

@@ -156,7 +156,7 @@ describe('SharedList', () => {
 	it('can delete with onDelete SharedString', () => {
 		let list = new SharedList(memory);
 		list.onDelete = (pointerData => {
-			let string = new SharedString(memory, getPointer(pointerData[0]));
+			let string = new SharedString(memory, getPointer(pointerData[0], memory.positionBits));
 			string.free();
 		});
 		list.insert((new SharedString(memory, 'Test')).pointer);
@@ -257,7 +257,7 @@ describe('SharedList', () => {
 		it('with onDelete SharedString', () => {
 			let list = new SharedList(memory);
 			list.onDelete = (pointerData => {
-				let string = new SharedString(memory, getPointer(pointerData[0]));
+				let string = new SharedString(memory, getPointer(pointerData[0], memory.positionBits));
 				string.free();
 			});
 			let startMemory = memory.currentUsed;
@@ -305,7 +305,7 @@ describe('SharedList', () => {
 			let startMemory = memory.currentUsed;
 			let list = new SharedList(memory);
 			list.onDelete = (pointerData => {
-				let string = new SharedString(memory, getPointer(pointerData[0]));
+				let string = new SharedString(memory, getPointer(pointerData[0], memory.positionBits));
 				string.free();
 			});
 			list.insert((new SharedString(memory, 'Test')).pointer);

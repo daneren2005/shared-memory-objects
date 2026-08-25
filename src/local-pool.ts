@@ -128,7 +128,7 @@ export default class LocalPool<T extends NumericArray = Uint32Array> implements 
 			this.pointers.push(newArray.pointer);
 		}
 
-		let array = new AllocatedMemory(this.memory, getPointer(this.pointers[pointerIndex]));
+		let array = new AllocatedMemory(this.memory, getPointer(this.pointers[pointerIndex], this.memory.positionBits));
 		let data: T = new this.typeConstructor(array.data.buffer, array.bufferByteOffset, this.dataLength * this.maxChunkSize);
 		this.fullDataBlocks[pointerIndex] = data;
 		return data;
@@ -141,7 +141,7 @@ export default class LocalPool<T extends NumericArray = Uint32Array> implements 
 
 	free() {
 		for(let pointer of this.pointers) {
-			let memory = new AllocatedMemory(this.memory, getPointer(pointer));
+			let memory = new AllocatedMemory(this.memory, getPointer(pointer, this.memory.positionBits));
 			memory.free();
 		}
 		this.pointers = [];

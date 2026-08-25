@@ -153,7 +153,7 @@ export default class SharedStack<T extends NumericArray = Uint32Array> implement
 	get usedMemory(): number {
 		let total = this.ownsFirstBlock ? this.firstBlock.usedMemory : 0;
 		for(let i = 0; i < this.segmentCount; i++) {
-			let pointer = getPointer(Atomics.load(this.firstBlock.data, SEGMENT_START_INDEX + i));
+			let pointer = getPointer(Atomics.load(this.firstBlock.data, SEGMENT_START_INDEX + i), this.memory.positionBits);
 			total += new AllocatedMemory(this.memory, pointer).usedMemory;
 		}
 		return total;
@@ -234,7 +234,7 @@ export default class SharedStack<T extends NumericArray = Uint32Array> implement
 		let maxSegmentLength = this.resolveMaxSegmentLength(baseSegmentLength, config?.maxSegmentLength, byteMultipler);
 		// Each segment block holds the data slots (byteMultipler u32s each) followed by one publish sequence u32 per slot
 		let firstSegmentBlock = this.memory.allocUI32(baseSegmentLength * (byteMultipler + 1));
-		storePointer(this.firstBlock.data, SEGMENT_START_INDEX, firstSegmentBlock.bufferPosition, firstSegmentBlock.bufferByteOffset);
+		storePointer(this.firstBlock.data, SEGMENT_START_INDEX, firstSegmentBlock.bufferPosition, firstSegmentBlock.bufferByteOffset, this.memory.positionBits);
 		this.baseSegmentLength = baseSegmentLength;
 		this.maxSegmentLength = maxSegmentLength;
 		this.maxSegments = this.resolveMaxSegments(config?.maxLength, baseSegmentLength, maxSegmentLength);
@@ -424,7 +424,7 @@ export default class SharedStack<T extends NumericArray = Uint32Array> implement
 				if(segmentIndex >= this.segmentCount) {
 					// Data slots (byteMultipler u32s each) followed by one publish sequence u32 per slot (calloc-zeroed = 0 = empty)
 					segmentDataBlock = this.memory.allocUI32(segmentLength * (this.cachedByteMultipler + 1));
-					storePointer(this.firstBlock.data, SEGMENT_START_INDEX + segmentIndex, segmentDataBlock.bufferPosition, segmentDataBlock.bufferByteOffset);
+					storePointer(this.firstBlock.data, SEGMENT_START_INDEX + segmentIndex, segmentDataBlock.bufferPosition, segmentDataBlock.bufferByteOffset, this.memory.positionBits);
 					Atomics.add(this.firstBlock.data, SEGMENT_COUNT_INDEX, 1);
 				}
 			} finally {
@@ -434,7 +434,7 @@ export default class SharedStack<T extends NumericArray = Uint32Array> implement
 
 		if(!segmentDataBlock) {
 			let pointerNumber = Atomics.load(this.firstBlock.data, SEGMENT_START_INDEX + segmentIndex);
-			let pointer = getPointer(pointerNumber);
+			let pointer = getPointer(pointerNumber, this.memory.positionBits);
 			segmentDataBlock = new AllocatedMemory(this.memory, pointer);
 		}
 
@@ -450,7 +450,7 @@ export default class SharedStack<T extends NumericArray = Uint32Array> implement
 	free() {
 		for(let i = 0; i < this.segmentCount; i++) {
 			let pointerNumber = Atomics.load(this.firstBlock.data, SEGMENT_START_INDEX + i);
-			let pointer = getPointer(pointerNumber);
+			let pointer = getPointer(pointerNumber, this.memory.positionBits);
 			let rawData = new AllocatedMemory(this.memory, pointer);
 			rawData.free();
 		}

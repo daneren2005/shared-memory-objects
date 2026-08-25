@@ -263,4 +263,22 @@ describe('SharedMap', () => {
 			expect(seen.get(13)).toEqual(130);
 		});
 	});
+
+	describe('usedMemory', () => {
+		it('counts the metadata block plus the table allocation', () => {
+			let map = new SharedMap<number>(memory);
+			let pointerMemory = memory.allocUI32(SharedMap.ALLOCATE_COUNT).usedMemory;
+			let table = memory.allocUI32(16 * (2 + 1)).usedMemory;
+			expect(map.usedMemory).toEqual(pointerMemory + table);
+		});
+
+		it('grows when the table is resized', () => {
+			let map = new SharedMap<number>(memory);
+			let before = map.usedMemory;
+			for(let i = 0; i < 100; i++) {
+				map.set(i, i);
+			}
+			expect(map.usedMemory).toBeGreaterThan(before);
+		});
+	});
 });

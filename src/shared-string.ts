@@ -96,7 +96,7 @@ export default class SharedString {
 		} else if(pointer === 0) {
 			return '';
 		}
-		let { bufferPosition, bufferByteOffset } = getPointer(pointer);
+		let { bufferPosition, bufferByteOffset } = getPointer(pointer, this.memory.positionBits);
 
 		lock(this.lock);
 		let charType = Atomics.load(this.allocatedMemory.data, TYPE_INDEX);
@@ -115,7 +115,7 @@ export default class SharedString {
 		return string;
 	}
 	set value(value: string) {
-		let { bufferPosition: oldBufferPosition, bufferByteOffset: oldBufferByteOffset } = loadPointer(this.allocatedMemory.data, POINTER_INDEX);
+		let { bufferPosition: oldBufferPosition, bufferByteOffset: oldBufferByteOffset } = loadPointer(this.allocatedMemory.data, POINTER_INDEX, this.memory.positionBits);
 		this.updateString(value);
 
 		if(oldBufferByteOffset) {
@@ -132,7 +132,7 @@ export default class SharedString {
 	}
 
 	free() {
-		let { bufferPosition, bufferByteOffset } = loadPointer(this.allocatedMemory.data, POINTER_INDEX);
+		let { bufferPosition, bufferByteOffset } = loadPointer(this.allocatedMemory.data, POINTER_INDEX, this.memory.positionBits);
 		if(bufferByteOffset) {
 			this.memory.buffers[bufferPosition].free(bufferByteOffset);
 		}

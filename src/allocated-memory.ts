@@ -12,7 +12,7 @@ export default class AllocatedMemory {
 		return this.data.byteOffset;
 	}
 	get pointer(): number {
-		return createPointer(this.bufferPosition, this.bufferByteOffset);
+		return createPointer(this.bufferPosition, this.bufferByteOffset, this.memory.positionBits);
 	}
 	private buffer: MemoryBuffer;
 	data: Uint32Array;

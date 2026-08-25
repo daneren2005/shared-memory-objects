@@ -53,7 +53,7 @@ export default class SharedVector<T extends NumericArray = Uint32Array> implemen
 	}
 
 	get usedMemory(): number {
-		let dataMemory = new AllocatedMemory(this.memory, loadPointer(this.firstBlock.data, VECTOR_INDEX));
+		let dataMemory = new AllocatedMemory(this.memory, loadPointer(this.firstBlock.data, VECTOR_INDEX, this.memory.positionBits));
 		return this.firstBlock.usedMemory + dataMemory.usedMemory;
 	}
 
@@ -73,7 +73,7 @@ export default class SharedVector<T extends NumericArray = Uint32Array> implemen
 				const byteMultipler = getByteMultipler(typeCode);
 				const bufferLength = config.bufferLength ?? DEFAULT_SIZE;
 				let dataBlock = memory.allocUI32(bufferLength * (config.dataLength ?? 1) * byteMultipler);
-				storePointer(this.firstBlock.data, VECTOR_INDEX, dataBlock.bufferPosition, dataBlock.bufferByteOffset);
+				storePointer(this.firstBlock.data, VECTOR_INDEX, dataBlock.bufferPosition, dataBlock.bufferByteOffset, memory.positionBits);
 				this.bufferLength = bufferLength;
 				this.dataLength = (config.dataLength ?? 1);
 				this.type = typeCode;
@@ -86,7 +86,7 @@ export default class SharedVector<T extends NumericArray = Uint32Array> implemen
 			let bufferLength = config?.bufferLength ?? DEFAULT_SIZE;
 			let typeCode = getArrayTypeCode(config?.type ?? Uint32Array);
 			let dataBlock = memory.allocUI32(bufferLength * dataLength * getByteMultipler(typeCode));
-			storePointer(this.firstBlock.data, VECTOR_INDEX, dataBlock.bufferPosition, dataBlock.bufferByteOffset);
+			storePointer(this.firstBlock.data, VECTOR_INDEX, dataBlock.bufferPosition, dataBlock.bufferByteOffset, memory.positionBits);
 			this.bufferLength = bufferLength;
 			this.type = typeCode;
 			this.dataLength = dataLength;
@@ -200,7 +200,7 @@ export default class SharedVector<T extends NumericArray = Uint32Array> implemen
 			return this.cachedFullDataBlock;
 		}
 
-		let pointer = getPointer(pointerNumber);
+		let pointer = getPointer(pointerNumber, this.memory.positionBits);
 		let rawData = new AllocatedMemory(this.memory, pointer);
 
 		let data = makeArrayView(this.type, rawData.data.buffer, rawData.bufferByteOffset, this.dataLength * this.bufferLength) as T;
@@ -220,7 +220,7 @@ export default class SharedVector<T extends NumericArray = Uint32Array> implemen
 		let newBufferLength = oldBufferLength * 2;
 		let dataLength = this.dataLength;
 
-		let oldPointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
+		let oldPointer = loadPointer(this.firstBlock.data, VECTOR_INDEX, this.memory.positionBits);
 		let oldDataMemory = new AllocatedMemory(this.memory, oldPointer);
 		let oldDataBlock = this.getFullDataBlock();
 		let newDataBlock = this.memory.allocUI32(newBufferLength * dataLength * this.cachedByteMultipler);
@@ -241,7 +241,7 @@ export default class SharedVector<T extends NumericArray = Uint32Array> implemen
 	}
 
 	free() {
-		let pointer = loadPointer(this.firstBlock.data, VECTOR_INDEX);
+		let pointer = loadPointer(this.firstBlock.data, VECTOR_INDEX, this.memory.positionBits);
 		let dataMemory = new AllocatedMemory(this.memory, pointer);
 
 		dataMemory.free();

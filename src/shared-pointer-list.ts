@@ -23,10 +23,10 @@ export default abstract class SharedPointerList<T extends PointerItem> implement
 	}
 
 	insert(item: T) {
-		this.list.insert(createPointer(item.memory.bufferPosition, item.memory.bufferByteOffset));
+		this.list.insert(createPointer(item.memory.bufferPosition, item.memory.bufferByteOffset, this.memory.positionBits));
 	}
 	delete(item: T) {
-		let deleted = this.list.deleteValue(createPointer(item.memory.bufferPosition, item.memory.bufferByteOffset));
+		let deleted = this.list.deleteValue(createPointer(item.memory.bufferPosition, item.memory.bufferByteOffset, this.memory.positionBits));
 		// This wrapper is single-threaded per instance, so reclaim the tombstoned node right away
 		this.list.compact();
 		return deleted;
@@ -40,7 +40,7 @@ export default abstract class SharedPointerList<T extends PointerItem> implement
 		let iterator = this.list[Symbol.iterator]();
 
 		for(let { data: pointerData } of iterator) {
-			let { bufferPosition, bufferByteOffset } = loadPointer(pointerData, 0);
+			let { bufferPosition, bufferByteOffset } = loadPointer(pointerData, 0, this.memory.positionBits);
 			let allocatedMemory = new AllocatedMemory(this.memory, {
 				bufferPosition,
 				bufferByteOffset,

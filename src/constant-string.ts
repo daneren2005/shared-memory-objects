@@ -53,7 +53,7 @@ export default class ConstantString {
 		if(pointer === 0) {
 			return '';
 		}
-		let { bufferPosition, bufferByteOffset } = getPointer(pointer);
+		let { bufferPosition, bufferByteOffset } = getPointer(pointer, this.memory.positionBits);
 
 		// No lock: the value never changes after it is written once, so the memory it points at is never freed or
 		// rewritten underneath us.
@@ -107,7 +107,7 @@ export default class ConstantString {
 	free() {
 		let pointer = loadRawPointer(this.allocatedMemory.data, POINTER_INDEX);
 		if(pointer) {
-			let { bufferPosition, bufferByteOffset } = getPointer(pointer);
+			let { bufferPosition, bufferByteOffset } = getPointer(pointer, this.memory.positionBits);
 			this.memory.buffers[bufferPosition].free(bufferByteOffset);
 		}
 		this.allocatedMemory.free();

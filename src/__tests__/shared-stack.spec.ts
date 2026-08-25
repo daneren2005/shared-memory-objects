@@ -303,6 +303,26 @@ describe('SharedStack', () => {
 		});
 		expect(stack.maxSegmentLength).toEqual(16);
 	});
+
+	it('a larger buffer size covers the same maxLength with fewer segments', () => {
+		let target = 1_000_000;
+		let smallBufferHeap = new MemoryHeap({ bufferSize: 1024 * 1024 });
+		let largeBufferHeap = new MemoryHeap({ bufferSize: 8 * 1024 * 1024 });
+
+		let smallBufferStack = new SharedStack(smallBufferHeap, { maxLength: target });
+		let largeBufferStack = new SharedStack(largeBufferHeap, { maxLength: target });
+
+		// 8MB segments cap at 8x the length of 1MB segments, so half as many segments cover the same target
+		expect(smallBufferStack.maxSegmentLength).toEqual(65_536);
+		expect(largeBufferStack.maxSegmentLength).toEqual(524_288);
+		expect(smallBufferStack.maxSegments).toEqual(29);
+		expect(largeBufferStack.maxSegments).toEqual(18);
+		expect(largeBufferStack.maxSegments).toBeLessThan(smallBufferStack.maxSegments);
+
+		// Both still address the full target
+		expect(smallBufferStack.maxLength).toBeGreaterThanOrEqual(target);
+		expect(largeBufferStack.maxLength).toBeGreaterThanOrEqual(target);
+	});
 });
 
 function flat(list: SharedStack<any>) {

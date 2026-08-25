@@ -40,7 +40,7 @@ describe('ConstantString', () => {
 		let string = new ConstantString(memory, 'Miner');
 
 		// getPointer(pointer) is what a worker does with the value stored in a component block.
-		let { bufferPosition, bufferByteOffset } = getPointer(string.pointer);
+		let { bufferPosition, bufferByteOffset } = getPointer(string.pointer, memory.positionBits);
 		let resolved = new ConstantString(memory, { bufferPosition, bufferByteOffset });
 		expect(resolved.value).toEqual('Miner');
 	});

@@ -1,16 +1,25 @@
 import AllocatedMemory, { type SharedAllocatedMemory } from './allocated-memory';
-import { MAX_BYTE_OFFSET_LENGTH, MAX_POSITION_LENGTH } from './utils/pointer';
+import { MAX_BYTE_OFFSET_LENGTH, positionBitsForBufferSize } from './utils/pointer';
 import MemoryBuffer, { SIZEOF_MEM_BLOCK, SIZEOF_STATE } from './memory-buffer';
 
 const DEFAULT_BUFFER_SIZE = MAX_BYTE_OFFSET_LENGTH;
+const MAX_BUFFER_SIZE = Math.pow(2, 31);
 const BUFFER_SIZE_INDEX = 0;
 const BUFFER_COUNT_INDEX = 1;
 const BUFFER_AUTO_GROW_INDEX = 2;
+const BUFFER_POSITION_BITS_INDEX = 3;
+const HEAP_STATE_COUNT = 4;
 export default class MemoryHeap {
 	buffers: Array<MemoryBuffer>;
 	private onGrowBufferHandlers: Array<OnGrowBuffer> = [];
 	isClone: boolean;
 	private memory: AllocatedMemory;
+
+	positionBits: number;
+	// Max buffer position (count) and max byte offset the split can address
+	get maxBuffers() {
+		return Math.pow(2, this.positionBits);
+	}
 
 	get bufferSize() {
 		return this.memory.data[BUFFER_SIZE_INDEX];
@@ -36,6 +45,7 @@ export default class MemoryHeap {
 				bufferPosition: 0,
 				bufferByteOffset: 40,
 			});
+			this.positionBits = this.memory.data[BUFFER_POSITION_BITS_INDEX];
 			this.isClone = true;
 		} else {
 			if(!('SharedArrayBuffer' in globalThis)) {
@@ -43,15 +53,16 @@ export default class MemoryHeap {
 			}
 
 			const bufferSize = config?.bufferSize ?? DEFAULT_BUFFER_SIZE;
-			if(bufferSize > MAX_BYTE_OFFSET_LENGTH) {
-				throw new Error(`Buffer size ${bufferSize} is greater than max ${MAX_BYTE_OFFSET_LENGTH} that we can reference with pointers`);
+			if(bufferSize > MAX_BUFFER_SIZE) {
+				throw new Error(`Buffer size ${bufferSize} is greater than max ${MAX_BUFFER_SIZE} that we can reference with pointers`);
 			}
-			
+			this.positionBits = positionBitsForBufferSize(bufferSize);
+
 			let startBuffer = this.createBuffer(bufferSize);
 			this.buffers = [
 				startBuffer,
 			];
-			const data = startBuffer.callocAs('u32', 3);
+			const data = startBuffer.callocAs('u32', HEAP_STATE_COUNT);
 			if(data) {
 				this.memory = new AllocatedMemory(this, {
 					bufferPosition: 0,
@@ -63,6 +74,7 @@ export default class MemoryHeap {
 			this.memory.data[BUFFER_SIZE_INDEX] = bufferSize;
 			this.memory.data[BUFFER_COUNT_INDEX] = 1;
 			this.memory.data[BUFFER_AUTO_GROW_INDEX] = config?.autoGrowSize ?? 100;
+			this.memory.data[BUFFER_POSITION_BITS_INDEX] = this.positionBits;
 			this.isClone = false;
 
 			for(let i = 1; i < (config?.initialBuffers ?? 1); i++) {
@@ -164,8 +176,8 @@ export default class MemoryHeap {
 			}
 		}
 
-		if(this.buffers.length >= MAX_POSITION_LENGTH) {
-			throw new Error(`Can't initialize a new buffer since it would have a position greater than the max of ${MAX_POSITION_LENGTH}`);
+		if(this.buffers.length >= this.maxBuffers) {
+			throw new Error(`Can't initialize a new buffer since it would have a position greater than the max of ${this.maxBuffers}`);
 		}
 
 		// If we get here we need to grow another buffer to continue allocating new memory
