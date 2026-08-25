@@ -31,6 +31,21 @@ describe('SharedPool', () => {
 		expect(vector.bufferLength).toEqual(100);
 	});
 
+	it('set overwrites a field in place', () => {
+		let vector = new SharedPool(memory, {
+			type: Uint32Array,
+			dataLength: 3,
+		});
+
+		let index = vector.push([1, 2, 3]);
+		vector.set(index, 1, 99);
+
+		expect(vector.get(index, 0)).toEqual(1);
+		expect(vector.get(index, 1)).toEqual(99);
+		expect(vector.get(index, 2)).toEqual(3);
+		expect(() => vector.set(index, 3, 0)).toThrow('3 is out of dataLength bounds 3');
+	});
+
 	it('continually grows memory as needed', () => {
 		let vector = new SharedPool(memory, {
 			type: Uint32Array,

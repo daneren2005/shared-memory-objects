@@ -41,6 +41,8 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 
 	private memory: MemoryHeap;
 	private pointerMemory: AllocatedMemory;
+	// False when pointerMemory is a slice of another structure's memory (e.g. inlined in SharedQuadtree); that owner frees it
+	private ownsFirstBlock = true;
 	private lock: Int32Array;
 	// Value type is written once at creation and never changes, so resolve it once instead of reading metadata per op
 	private cachedType: number;
@@ -103,29 +105,46 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 		lock(this.lock);
 		try {
 			this.ensureTable();
-			return this.pointerMemory.usedMemory + this.cachedTableMemory!.usedMemory;
+			// When inlined, the owner already counts pointerMemory as part of its own firstBlock
+			let ownMemory = this.ownsFirstBlock ? this.pointerMemory.usedMemory : 0;
+			return ownMemory + this.cachedTableMemory!.usedMemory;
 		} finally {
 			unlock(this.lock);
 		}
 	}
 
-	constructor(memory: MemoryHeap, config?: SharedMapConfig<V> | SharedMapMemory) {
+	constructor(memory: MemoryHeap, config?: SharedMapConfig<V> | SharedMapMemory | SharedMapMemory & SharedMapConfig<V>) {
 		this.memory = memory;
 
 		if(config && 'firstBlock' in config) {
-			this.pointerMemory = new AllocatedMemory(memory, config.firstBlock);
+			// An AllocatedMemory instance is a caller-reserved slice (e.g. inlined in SharedQuadtree) for us to initialize in
+			// place; a plain pointer is the serialized clone path, whose table already exists and is read from metadata.
+			if(config.firstBlock instanceof AllocatedMemory) {
+				this.pointerMemory = config.firstBlock;
+				this.initialize(config);
+				this.ownsFirstBlock = false;
+			} else {
+				this.pointerMemory = new AllocatedMemory(memory, config.firstBlock);
+			}
 		} else {
 			this.pointerMemory = memory.allocUI32(SharedMap.ALLOCATE_COUNT);
-			let typeCode = getArrayTypeCode(config?.type ?? Uint32Array);
-			this.cachedValueUnits = getByteMultipler(typeCode);
-			let table = memory.allocUI32(DEFAULT_CAPACITY * (2 + this.cachedValueUnits));
-			storeRawPointer(this.pointerMemory.data, TABLE_POINTER_INDEX, table.pointer);
-			Atomics.store(this.pointerMemory.data, CAPACITY_INDEX, DEFAULT_CAPACITY);
-			Atomics.store(this.pointerMemory.data, TYPE_INDEX, typeCode);
+			this.initialize(config);
 		}
 		this.lock = new Int32Array(this.pointerMemory.data.buffer, this.pointerMemory.bufferByteOffset + LOCK_INDEX * Uint32Array.BYTES_PER_ELEMENT, SIMPLE_LOCK_ALLOCATE_COUNT);
 		this.cachedType = Atomics.load(this.pointerMemory.data, TYPE_INDEX);
 		this.cachedValueUnits = getByteMultipler(this.cachedType);
+	}
+
+	// Allocate the initial table and write the metadata. pointerMemory must already be set. Used by both the fresh-alloc
+	// path and the inline-in-place path (where pointerMemory is a slice reserved by the owner).
+	private initialize(config?: SharedMapConfig<V> | SharedMapMemory) {
+		let type = config && 'type' in config ? config.type : undefined;
+		let typeCode = getArrayTypeCode(type ?? Uint32Array);
+		this.cachedValueUnits = getByteMultipler(typeCode);
+		let table = this.memory.allocUI32(DEFAULT_CAPACITY * (2 + this.cachedValueUnits));
+		storeRawPointer(this.pointerMemory.data, TABLE_POINTER_INDEX, table.pointer);
+		Atomics.store(this.pointerMemory.data, CAPACITY_INDEX, DEFAULT_CAPACITY);
+		Atomics.store(this.pointerMemory.data, TYPE_INDEX, typeCode);
 	}
 
 	set(key: K, value: V[number]) {
@@ -359,7 +378,9 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 	free() {
 		this.ensureTable();
 		this.cachedTableMemory!.free();
-		this.pointerMemory.free();
+		if(this.ownsFirstBlock) {
+			this.pointerMemory.free();
+		}
 	}
 
 	getSharedMemory(): SharedMapMemory {
@@ -373,7 +394,7 @@ interface SharedMapConfig<V extends NumericArray> {
 	type?: TypedArrayConstructor<V>
 }
 interface SharedMapMemory {
-	firstBlock: SharedAllocatedMemory
+	firstBlock: SharedAllocatedMemory | AllocatedMemory
 }
 
 export type { SharedMapConfig, SharedMapMemory };

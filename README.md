@@ -65,19 +65,34 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 - SharedStack - push/pop with exponentially growing internal segments.
 - SharedString
 - ConstantString - an immutable SharedString: the value is written once and never changes, so it drops the lock word and all of SharedString's read/write locking
+- SharedQuadtree - a fixed-depth region quadtree for live, concurrent spatial updates.  The tree shape is allocated once and never subdivides at runtime, so different cells never contend and entities can be inserted/moved/removed from any thread.  Each entity lives in the single deepest cell that fully contains it; `retrieve(x, y, width, height)` returns a broad-phase superset of candidate ids (same guarantee as quadtree-ts).  Configure with `{ bounds: { x, y, width, height }, maxLevels, maxEntities, type }`, where `type` is `Float32Array` (default) or `Float64Array` for the stored coordinate precision.
+- SharedSpatialGrid - a uniform fixed grid for live, concurrent spatial updates, the flat-grid counterpart to `SharedQuadtree`.  The `cols x rows` array of cells is allocated once and never reshaped, so different cells never contend and entities can be inserted/moved/removed from any thread.  Unlike the quadtree, an entity is linked into *every* cell its rect overlaps, so a large or edge-straddling entity spans several cells; `retrieve(x, y, width, height)` still returns each candidate id at most once (a per-slot anchor cell dedups without any shared state, so concurrent queries stay safe).  Locating a cell is O(1) arithmetic instead of a tree descent, which tends to beat the quadtree for evenly distributed, similarly-sized entities.  Configure with `{ bounds: { x, y, width, height }, gridSize, maxEntities, maxSlots, type }`, where `gridSize` defaults to `50` and `type` is `Float32Array` (default) or `Float64Array` for the stored coordinate precision.
+- SharedSpatialMap - an unbounded spatial hash for live, concurrent spatial updates, the boundless counterpart to `SharedSpatialGrid`.  It indexes the same way (an entity is linked into *every* virtual cell of side `gridSize` its rect overlaps) but drops the fixed `cols x rows` extent, so the world can be any size and cells may sit at any coordinate, positive or negative - there are no `bounds`.  A cell is hashed into a fixed array of `buckets` (a lock-striped separate-chaining hash table) that is allocated once and never resized, so different buckets never contend and only cells that collide onto one bucket serialize; `buckets` trades memory for that contention.  `retrieve(x, y, width, height)` still returns each candidate id at most once (the same per-slot anchor-cell dedup).  Configure with `{ gridSize, buckets, maxEntities, maxSlots, type }`, where `gridSize` defaults to `50`, `buckets` defaults to `8192`, and `type` is `Float32Array` (default) or `Float64Array` for the stored coordinate precision.  A power-of-two `buckets` (like the default) is hashed with a bitmask instead of an integer modulo, so it locates a bucket faster; any other value still works but falls back to the modulo.
 
 ## Memory Usage
 `SharedList`, `SharedVector`, `SharedPool`, and `SharedStack` each expose a `usedMemory` getter that returns the number of bytes the structure occupies in the heap, including every pointer resource it owns.  For example, `SharedStack.usedMemory` is its own internal memory plus the combined memory of each already allocated segment, and `SharedPool.usedMemory` includes each chunk buffer and the segments of its two internal stacks (but not those stacks' internal memory, since that is inlined into the pool's own internal memory).  The number is the aligned data size of each allocation and excludes the allocator's per-block header.  SharedStack and SharedPool get a lot of their close to native performance by allocating more memory than maybe needed and locking in max length up front.  This works well when used for a few high-performance structures, but if you are giving each entity in an ECS framework multiple SharedPools that memory is going to add up quickly.  Both SharedPool and SharedStack initial memory can be tweaked by lowering the maxLength param.
 
 Freshly allocated with the default options:
 
-| Structure     | Used Memory |
-| ------------- | ----------- |
-| SharedList    | 16 bytes    |
-| SharedVector  | 32 bytes    |
-| SharedStack   | 144 bytes   |
-| SharedPool    | 656 bytes   |
-| SharedMap     | 216 bytes   |
+| Structure         | Used Memory |
+| -------------     | ----------- |
+| SharedList        | 16 bytes    |
+| SharedVector      | 32 bytes    |
+| SharedStack       | 144 bytes   |
+| SharedPool        | 656 bytes   |
+| SharedMap         | 216 bytes   |
+| SharedQuadtree    | 6064 bytes  |
+| SharedQuadtree(6) | 47024 bytes |
+| SharedSpatialGrid (20x20 cells) | 7216 bytes  |
+| SharedSpatialGrid (80x80 cells) | 55216 bytes |
+| SharedSpatialMap (2048 buckets) | 21160 bytes |
+| SharedSpatialMap (8192 buckets) | 70312 bytes |
+
+`SharedQuadtree`'s footprint is dominated by its fixed node array, which is allocated once up front and never grows.  The default `maxLevels` of 4 is a complete tree of 341 nodes (`(4^(maxLevels+1) - 1) / 3`), so the number scales with `maxLevels`: a deeper tree resolves smaller entities but costs `~2 u32` per node.  The rest is its internal `SharedPool` of entity records and the `SharedMap` that indexes entities by id, whose header blocks are inlined into the tree's own allocation (the same way `SharedPool` inlines its two stacks) so the whole spine is one contiguous block instead of three separate pointer resources.  The record (id, `x/y/w/h`, node, bucket link) is stored at the configured precision, defaulting to `Float32` to match a physics engine that keeps positions in `Float32`.  `Float32` stays exact as long as entity ids and the entity count both stay under 2^24 (~16.7M); pass `type: Float64Array` if you need ids or a capacity beyond that (constructing a `Float32` tree with `maxEntities` over 2^24 throws), at the cost of more memory per entity.
+
+`SharedSpatialGrid`'s footprint is likewise dominated by its fixed cell array (`cols x rows` cells at `~2 u32` each), so it scales with cell count rather than `maxLevels`: `cols = ceil(width / gridSize)` and `rows = ceil(height / gridSize)`, so a smaller `gridSize` resolves finer at the cost of more cells (the 20x20 grid above is a 1000x1000 world at `gridSize` 50; the 80x80 grid is a 4000x4000 world at `gridSize` 50).  The rest is two inlined `SharedPool`s - one of entity records (the occupied cell rectangle, keyed by an inlined `SharedMap` of id -> index) and one of per-cell "slot" records (`id`, anchor cell, bucket link) - since a multi-cell entity needs one slot per cell it overlaps.  `maxSlots` therefore defaults to `maxEntities * 4` to leave headroom for spanning entities.  Coordinate precision follows the same `Float32`-default rule as the quadtree (ids, both pools' indices, and cell indices must stay under 2^24 for `Float32`; pass `type: Float64Array` otherwise).
+
+`SharedSpatialMap`'s footprint is dominated by its fixed bucket array (`buckets` at `~2 u32` each) rather than a cell array, so it scales with `buckets` instead of world size - the whole point is that the world has no fixed extent.  More buckets means shorter hash chains (less contention and faster queries) at the cost of more memory; the default of `8192` is the bulk of the 70312 bytes above.  The rest is the same two inlined `SharedPool`s as the grid - one of entity records (the occupied cell rectangle, keyed by an inlined `SharedMap` of id -> index) and one of per-cell "slot" records - except each slot also stores its own `(col, row)` (a bucket mixes slots from every cell that hashes to it, so a walk must filter to the cell it is looking at).  `maxSlots` again defaults to `maxEntities * 4`, and coordinate precision follows the same `Float32`-default rule (ids and both pools' indices under 2^24, and cell `(col, row)` within `±2^24`, for `Float32`; pass `type: Float64Array` otherwise).
 
 ## Thread Safety
 - Memory allocations is thread safe as long as it does not need to create a new buffer.  Right now that can only be done from the main thread.  I just make sure there is always an extra empty buffer with SharedHeap.ensureSpareBuffer() before sending more work to worker threads.
@@ -85,6 +100,9 @@ Freshly allocated with the default options:
 - SharedVector is *not* thread safe and probably never will be - it is useful for updating in main thread and then sending off to works for processing
 - SharedString is thread safe with a lock on read/write with a cached version of the string so it doesn't need to lock after the first read unless the string has changed.
 - ConstantString is safe to read from any thread without a lock precisely because it is never written after construction
+- SharedQuadtree is thread safe.  Its node structure never changes shape, so concurrency reduces to per-cell content updates guarded by a per-node lock
+- SharedSpatialGrid is thread safe.  Its cell array never changes shape, so concurrency reduces to per-cell content updates guarded by a per-cell lock; a query racing an in-flight move sees the entity in its old or new cells (or briefly both), never neither
+- SharedSpatialMap is thread safe.  Its bucket array never changes shape (it is sized up front and never rehashed), so concurrency reduces to per-bucket content updates guarded by a per-bucket lock; like the grid, a query racing an in-flight move sees the entity in its old or new cells (or briefly both), never neither
 
 
 ## Performance
@@ -247,6 +265,51 @@ native map  93,101.22  0.0068  0.1661  0.0107  0.0127  0.0194  0.0224  0.0320  �
 
 native map
 2.92x faster than shared map
+```
+
+### SharedQuadtree, SharedSpatialGrid & SharedSpatialMap vs quadtree-ts
+`SharedQuadtree`, `SharedSpatialGrid`, and `SharedSpatialMap` are compared against [quadtree-ts](https://github.com/timohausmann/quadtree-ts).  2000 entities in a 4000x4000 world at `maxLevels` 6 (the grid uses a matching `gridSize` of `4000 / 2^6`; the map uses that `gridSize` with `8192` buckets), 2000 broad-phase queries.  The grid and map lose to the quadtree on build (they write a slot per overlapped cell rather than one record per entity) but win on moves - locating a cell is O(1) arithmetic, so they never walk a tree.  The map trails the grid on queries by ~20% (it pays a hash plus a chain filter per cell instead of a direct array index) in exchange for supporting a world of any size, and edges ahead of it on moves.  Keeping `buckets` a power of two (the default `8192` is) lets the hash fold with a bitmask instead of an integer modulo, which is the bulk of that query gap.
+
+Spatial: build a tree of 2000 entities
+```
+name                     hz     min     max    mean     p75     p99    p995    p999     rme  samples
+shared quadtree    1,436.15  0.6209  1.3570  0.6963  0.7027  1.1195  1.2089  1.3570  ±1.07%      719
+shared grid        1,374.14  0.6542  1.2853  0.7277  0.7477  1.1090  1.1732  1.2853  ±0.90%      688
+shared spatial map 1,400.20  0.6582  1.3059  0.7142  0.6994  1.0970  1.2237  1.3059  ±0.92%      701
+quadtree-ts        3,046.65  0.2783  0.8150  0.3282  0.3204  0.5779  0.6358  0.7510  ±1.10%     1524
+
+quadtree-ts
+2.12x faster than shared quadtree
+2.18x faster than shared spatial map
+2.22x faster than shared grid
+```
+
+Spatial: 2000 broad-phase queries
+```
+name                   hz     min     max    mean     p75     p99    p995    p999     rme  samples
+shared quadtree     371.48  2.5098  3.4806  2.6920  2.7648  3.4707  3.4806  3.4806  ±1.10%      186
+shared grid        1,070.21 0.8526  1.6428  0.9344  0.9378  1.4434  1.5309  1.6428  ±1.05%      536
+shared spatial map  872.88  1.0642  2.1479  1.1456  1.1538  1.5745  1.7456  2.1479  ±0.91%      437
+quadtree-ts         468.88  1.9026  3.4872  2.1327  2.2241  2.8745  2.9228  3.4872  ±1.31%      235
+
+shared grid
+1.23x faster than shared spatial map
+2.28x faster than quadtree-ts
+2.88x faster than shared quadtree
+```
+
+Spatial: move all 2000 entities one step
+```
+name                     hz      min      max     mean      p75      p99     p995     p999     rme  samples
+shared quadtree    2,141.72   0.4201   1.4691   0.4669   0.4566   0.8083   0.9164   0.9715  ±0.98%     1071
+shared grid        5,975.70   0.1585   0.3740   0.1673   0.1652   0.2599   0.2882   0.3438  ±0.38%     2988
+shared spatial map 6,102.92   0.1500   0.4624   0.1639   0.1621   0.2762   0.2985   0.3736  ±0.51%     3052
+quadtree-ts        91.1875  10.4286  14.0798  10.9664  10.9999  14.0798  14.0798  14.0798  ±1.87%       46
+
+shared spatial map
+1.02x faster than shared grid
+2.85x faster than shared quadtree
+66.93x faster than quadtree-ts
 ```
 
 ## Credit
