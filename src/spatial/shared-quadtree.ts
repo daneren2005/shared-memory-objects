@@ -340,6 +340,16 @@ export default class SharedQuadtree {
 			nodeCandidates.length = 0;
 			this.collectNeighborNode(nodeCandidates, node.index, x, y, maxDistanceSquared);
 			for(let candidate of nodeCandidates) {
+				let duplicate = false;
+				for(let existing of candidates) {
+					if(existing.id === candidate.id) {
+						duplicate = true;
+						break;
+					}
+				}
+				if(duplicate) {
+					continue;
+				}
 				if(filter === undefined || filter(candidate.id)) {
 					addCandidate(candidates, candidate.id, candidate.distance, maxResults);
 				}
