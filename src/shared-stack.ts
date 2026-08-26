@@ -263,6 +263,11 @@ export default class SharedStack<T extends NumericArray = Uint32Array> implement
 			localIndex = offset - extra * maxSegmentLength;
 		}
 		let segment = this.cachedSegments[segmentIndex] ?? this.getSegment(segmentIndex);
+		// push() bumps the length before it stores the value and publishes the slot, so an index already counted in length
+		// can still be mid-publish. Wait for the slot's sequence to go odd (published) before reading, otherwise we hand
+		// back a slot whose value hasn't landed yet - for the pool's chunk pointers that means decoding a zeroed pointer.
+		let sequences = this.cachedSequences[segmentIndex];
+		while((Atomics.load(sequences, localIndex) & 1) === 0) { /* spin: value is being published on another thread */ }
 		return (segment as NumericArrayIO)[localIndex];
 	}
 

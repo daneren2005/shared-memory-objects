@@ -267,49 +267,67 @@ native map
 2.92x faster than shared map
 ```
 
-### SharedQuadtree, SharedSpatialGrid & SharedSpatialMap vs quadtree-ts
-`SharedQuadtree`, `SharedSpatialGrid`, and `SharedSpatialMap` are compared against [quadtree-ts](https://github.com/timohausmann/quadtree-ts).  2000 entities in a 4000x4000 world at `maxLevels` 6 (the grid uses a matching `gridSize` of `4000 / 2^6`; the map uses that `gridSize` with `8192` buckets), 2000 broad-phase queries.  The grid and map lose to the quadtree on build (they write a slot per overlapped cell rather than one record per entity) but win on moves - locating a cell is O(1) arithmetic, so they never walk a tree.  The map trails the grid on queries by ~20% (it pays a hash plus a chain filter per cell instead of a direct array index) in exchange for supporting a world of any size, and edges ahead of it on moves.  Keeping `buckets` a power of two (the default `8192` is) lets the hash fold with a bitmask instead of an integer modulo, which is the bulk of that query gap.
+### SharedQuadtree, SharedSpatialGrid & SharedSpatialMap vs quadtree-ts and Flatbush
+`SharedQuadtree`, `SharedSpatialGrid`, and `SharedSpatialMap` are compared against [quadtree-ts](https://github.com/timohausmann/quadtree-ts) and [Flatbush](https://github.com/mourner/flatbush).  2000 entities are indexed in a 4000x4000 world at `maxLevels` 6 (the grid uses a matching `gridSize` of `4000 / 2^6`; the map uses that `gridSize` with `8192` buckets), followed by 2000 broad-phase queries.  Flatbush is a packed static index and leads build and query performance, but it cannot be updated after indexing.  The 20% movement benchmark therefore compares updating 400 entities in place in each shared structure against rebuilding the complete 2000-entity Flatbush index.  In that workload, the shared spatial map is 2.66x faster than rebuilding Flatbush, the shared grid is 2.42x faster, and the shared quadtree is 1.15x faster.
 
 Spatial: build a tree of 2000 entities
 ```
-name                     hz     min     max    mean     p75     p99    p995    p999     rme  samples
-shared quadtree    1,436.15  0.6209  1.3570  0.6963  0.7027  1.1195  1.2089  1.3570  ±1.07%      719
-shared grid        1,374.14  0.6542  1.2853  0.7277  0.7477  1.1090  1.1732  1.2853  ±0.90%      688
-shared spatial map 1,400.20  0.6582  1.3059  0.7142  0.6994  1.0970  1.2237  1.3059  ±0.92%      701
-quadtree-ts        3,046.65  0.2783  0.8150  0.3282  0.3204  0.5779  0.6358  0.7510  ±1.10%     1524
+name                      hz     min      max    mean     p75     p99     p995     p999     rme  samples
+shared quadtree       338.95  1.6234   8.1613  2.9503  3.3489  6.6913   8.1613   8.1613  ±5.63%      170
+shared grid           284.56  1.7377  10.9921  3.5142  4.1922  8.3428  10.9921  10.9921  ±6.86%      143
+shared spatial map    337.29  1.6040   8.2749  2.9648  3.2585  7.9714   8.2749   8.2749  ±5.20%      169
+quadtree-ts         1,241.06  0.3860   9.3226  0.8058  0.8723  4.4848   5.4128   9.3226  ±7.34%      621
+flatbush            3,143.37  0.1400   6.7574  0.3181  0.2999  1.3990   2.2252   5.8414  ±5.60%     1572
 
-quadtree-ts
-2.12x faster than shared quadtree
-2.18x faster than shared spatial map
-2.22x faster than shared grid
+flatbush
+2.53x faster than quadtree-ts
+9.27x faster than shared quadtree
+9.32x faster than shared spatial map
+11.05x faster than shared grid
 ```
 
 Spatial: 2000 broad-phase queries
 ```
-name                   hz     min     max    mean     p75     p99    p995    p999     rme  samples
-shared quadtree     371.48  2.5098  3.4806  2.6920  2.7648  3.4707  3.4806  3.4806  ±1.10%      186
-shared grid        1,070.21 0.8526  1.6428  0.9344  0.9378  1.4434  1.5309  1.6428  ±1.05%      536
-shared spatial map  872.88  1.0642  2.1479  1.1456  1.1538  1.5745  1.7456  2.1479  ±0.91%      437
-quadtree-ts         468.88  1.9026  3.4872  2.1327  2.2241  2.8745  2.9228  3.4872  ±1.31%      235
+name                    hz     min      max    mean     p75      p99     p995     p999     rme  samples
+shared quadtree     136.47  4.6172  14.9937  7.3275  8.6034  14.9937  14.9937  14.9937  ±6.53%       69
+shared grid         388.46  0.9257   7.2489  2.5743  3.1070   7.0553   7.2489   7.2489  ±6.91%      195
+shared spatial map  295.50  1.5615  11.5353  3.3841  3.5785  10.5017  11.5353  11.5353  ±7.52%      148
+quadtree-ts         179.54  2.7824  11.9709  5.5698  6.5513  11.9709  11.9709  11.9709  ±6.82%       90
+flatbush            673.48  0.8118   6.0650  1.4848  1.6317   5.4448   5.8011   6.0650  ±5.57%      339
 
-shared grid
-1.23x faster than shared spatial map
-2.28x faster than quadtree-ts
-2.88x faster than shared quadtree
+flatbush
+1.73x faster than shared grid
+2.28x faster than shared spatial map
+3.75x faster than quadtree-ts
+4.93x faster than shared quadtree
+```
+
+Spatial: move 400 of 2000 entities one step
+```
+name                       hz     min     max    mean     p75     p99    p995    p999     rme  samples
+shared quadtree      5,020.99  0.0832  2.4519  0.1992  0.1941  0.7585  0.9908  2.2573  ±2.76%     2512
+shared grid         10,595.09  0.0315  4.7010  0.0944  0.0827  0.5556  0.8603  1.7301  ±3.86%     5298
+shared spatial map  11,623.18  0.0294  5.2839  0.0860  0.0717  0.5410  0.8127  2.0291  ±4.20%     5812
+flatbush (rebuild)   4,372.62  0.0880  5.2188  0.2287  0.2381  0.7376  1.7063  4.5994  ±4.86%     2187
+
+shared spatial map
+1.10x faster than shared grid
+2.31x faster than shared quadtree
+2.66x faster than flatbush (rebuild)
 ```
 
 Spatial: move all 2000 entities one step
 ```
-name                     hz      min      max     mean      p75      p99     p995     p999     rme  samples
-shared quadtree    2,141.72   0.4201   1.4691   0.4669   0.4566   0.8083   0.9164   0.9715  ±0.98%     1071
-shared grid        5,975.70   0.1585   0.3740   0.1673   0.1652   0.2599   0.2882   0.3438  ±0.38%     2988
-shared spatial map 6,102.92   0.1500   0.4624   0.1639   0.1621   0.2762   0.2985   0.3736  ±0.51%     3052
-quadtree-ts        91.1875  10.4286  14.0798  10.9664  10.9999  14.0798  14.0798  14.0798  ±1.87%       46
+name                      hz      min      max     mean      p75      p99     p995     p999      rme  samples
+shared quadtree       929.24   0.4555   4.3723   1.0761   1.1563   3.0015   3.3396   4.3723   ±3.94%      465
+shared grid         2,956.61   0.1646   2.9637   0.3382   0.3650   1.1118   1.2213   2.2467   ±2.61%     1479
+shared spatial map  2,510.91   0.1786   7.0300   0.3983   0.4096   1.5840   1.9618   3.5255   ±4.50%     1256
+quadtree-ts          27.6192  13.1874  76.4572  36.2067  55.1139  76.4572  76.4572  76.4572  ±32.72%       14
 
-shared spatial map
-1.02x faster than shared grid
-2.85x faster than shared quadtree
-66.93x faster than quadtree-ts
+shared grid
+1.18x faster than shared spatial map
+3.18x faster than shared quadtree
+107.05x faster than quadtree-ts
 ```
 
 ## Credit
