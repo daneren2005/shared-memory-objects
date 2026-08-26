@@ -7,14 +7,15 @@ import type { SpatialKind } from './spatial-safety.worker';
 // Each worker owns a disjoint id range (worker N owns [N * ID_RANGE, N * ID_RANGE + insertPerWorker)) so every entity has
 // exactly one writer - the standard shared-memory pattern. Workers insert their own entities and then move them around
 // the world for several rounds, all concurrently, hammering the per-node/cell/bucket locks. Afterwards a full-world
-// retrieve must return exactly the surviving ids, each valid and unique: a torn link or lost update would show up as a
+// search must return exactly the surviving ids, each valid and unique: a torn link or lost update would show up as a
 // garbage id, a duplicate, or a count mismatch.
 export const ID_RANGE = 1_000_000;
 export const WORLD = { x: 0, y: 0, width: 4000, height: 4000 };
 
 interface SpatialStructure {
 	size: number
-	retrieve(x: number, y: number, width: number, height: number): Array<number>
+	search(x: number, y: number, width: number, height: number): Array<number>
+	neighbors(x: number, y: number, maxResults: number, maxDistance: number, filter?: (id: number) => boolean): Array<number>
 	getSharedMemory(): { firstBlock: unknown }
 }
 // Counts the caller asserts on in one go: in a clean run every one of them equals the number of entities inserted.
@@ -25,11 +26,14 @@ export interface SpatialSafetyResult {
 	uniqueRetrieved: number
 	inWorkerRange: number
 	foundAtLastPosition: number
+	foundAtLastNeighborPosition: number
 	stillOwned: number
+	neighborQueries: number
+	validNeighborQueries: number
 }
 
 // The shape a clean run produces, so a spec can assert the whole result in a single expect
-export function expectedSpatialResult(entityCount: number): SpatialSafetyResult {
+export function expectedSpatialResult(entityCount: number, neighborQueries: number): SpatialSafetyResult {
 	return {
 		workerTotal: entityCount,
 		size: entityCount,
@@ -37,7 +41,10 @@ export function expectedSpatialResult(entityCount: number): SpatialSafetyResult 
 		uniqueRetrieved: entityCount,
 		inWorkerRange: entityCount,
 		foundAtLastPosition: entityCount,
+		foundAtLastNeighborPosition: entityCount,
 		stillOwned: entityCount,
+		neighborQueries,
+		validNeighborQueries: neighborQueries,
 	};
 }
 
@@ -64,6 +71,8 @@ export async function runSpatialSafety(workerFile: string, config: SpatialSafety
 			heap: heap.getSharedMemory(),
 			structure: structure.getSharedMemory(),
 			idBase: (index + 1) * ID_RANGE,
+			idRange: ID_RANGE,
+			workerCount,
 			insertCount: insertPerWorker,
 			updateRounds,
 			world: WORLD,
@@ -74,11 +83,15 @@ export async function runSpatialSafety(workerFile: string, config: SpatialSafety
 	await Promise.all(workers.map(worker => worker.nextMessage<{ ready: true }>()));
 
 	workers.forEach(worker => worker.postMessage({ run: true }));
-	let results = await Promise.all(workers.map(worker => worker.nextMessage<{ expectedCount: number }>()));
+	let results = await Promise.all(workers.map(worker => worker.nextMessage<{
+		expectedCount: number
+		neighborQueries: number
+		validNeighborQueries: number
+	}>()));
 
 	// A full-world query returns every stored id. Each must be unique and fall inside some worker's id range - anything
 	// else means a corrupted bucket link or a torn item record.
-	let all = structure.retrieve(WORLD.x, WORLD.y, WORLD.width, WORLD.height);
+	let all = structure.search(WORLD.x, WORLD.y, WORLD.width, WORLD.height);
 	let unique = new Set(all);
 	let inWorkerRange = [...unique].filter(id => {
 		let workerNumber = Math.floor(id / ID_RANGE);
@@ -88,7 +101,11 @@ export async function runSpatialSafety(workerFile: string, config: SpatialSafety
 
 	// Every entity must still resolve at the position its owner last moved it to
 	workers.forEach(worker => worker.postMessage({ check: true }));
-	let checks = await Promise.all(workers.map(worker => worker.nextMessage<{ missing: Array<number>, total: number }>()));
+	let checks = await Promise.all(workers.map(worker => worker.nextMessage<{
+		missing: Array<number>
+		missingNeighbors: Array<number>
+		total: number
+	}>()));
 
 	return {
 		workerTotal: results.reduce((total, result) => total + result.expectedCount, 0),
@@ -98,5 +115,8 @@ export async function runSpatialSafety(workerFile: string, config: SpatialSafety
 		inWorkerRange,
 		stillOwned: checks.reduce((total, check) => total + check.total, 0),
 		foundAtLastPosition: checks.reduce((total, check) => total + check.total - check.missing.length, 0),
+		foundAtLastNeighborPosition: checks.reduce((total, check) => total + check.total - check.missingNeighbors.length, 0),
+		neighborQueries: results.reduce((total, result) => total + result.neighborQueries, 0),
+		validNeighborQueries: results.reduce((total, result) => total + result.validNeighborQueries, 0),
 	};
 }

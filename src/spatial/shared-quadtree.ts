@@ -6,6 +6,10 @@ import SharedMap from '../shared-map';
 import { lock, unlock } from '../lock/simple-lock';
 import { getPointer, loadRawPointer, storeRawPointer } from '../utils/pointer';
 import { ARRAY_TYPE, getArrayTypeCode, getByteMultipler, makeArrayView } from '../utils/array-type';
+import {
+	MinPriorityQueue, addCandidate, candidateLimit, distanceSquaredToRect,
+	type NeighborCandidate, type NearestNeighbor,
+} from './spatial-neighbors';
 
 // Fixed-depth region quadtree ("implicit" / hierarchical grid) built for concurrent updates from many threads. Dynamic
 // subdivision is deliberately avoided: creating/redistributing/freeing nodes at runtime races with readers mid-traversal
@@ -18,7 +22,7 @@ import { ARRAY_TYPE, getArrayTypeCode, getByteMultipler, makeArrayView } from '.
 // (stable indices, recycling) and an id->itemIndex SharedMap makes update/remove O(depth) by entity id.
 //
 // Each entity is stored in the single deepest node that fully contains its rect (an item too large or straddling a
-// midline stays at an ancestor). retrieve walks every node whose region intersects the query and returns a broad-phase
+// midline stays at an ancestor). search walks every node whose region intersects the query and returns a broad-phase
 // superset of candidate ids - the same guarantee quadtree-js's retrieve gives, without duplicating straddlers.
 //
 // The whole item record (id, coords, node, bucket link) lives in one pool at the configured precision. Float32 (the
@@ -279,15 +283,166 @@ export default class SharedQuadtree {
 
 	// Broad-phase query: ids of every entity in a node whose region intersects the given rect. Result is a superset of true
 	// overlaps (the caller does the narrow-phase check), matching quadtree-js retrieve.
-	retrieve(x: number, y: number, width: number, height: number): Array<number> {
+	search(x: number, y: number, width: number, height: number, filter?: (id: number) => boolean): Array<number> {
 		let out: Array<number> = [];
-		this.retrieveInto(out, x, y, width, height);
+		this.searchInto(out, x, y, width, height, filter);
 		return out;
 	}
-	// Same as retrieve but appends into a caller-owned array so hot loops can reuse it. Returns the array.
-	retrieveInto(out: Array<number>, x: number, y: number, width: number, height: number): Array<number> {
+	// Same as search but appends into a caller-owned array so hot loops can reuse it. Returns the array.
+	searchInto(out: Array<number>, x: number, y: number, width: number, height: number, filter?: (id: number) => boolean): Array<number> {
+		let start = out.length;
 		this.collect(out, 0, this.rootX, this.rootY, this.rootWidth, this.rootHeight, 0, x, y, width, height);
+		if(filter !== undefined) {
+			let write = start;
+			for(let read = start; read < out.length; read++) {
+				let id = out[read];
+				if(filter(id)) {
+					out[write++] = id;
+				}
+			}
+			out.length = write;
+		}
 		return out;
+	}
+
+	neighbors(x: number, y: number, maxResults: number, maxDistance: number, filter?: (id: number) => boolean): Array<number> {
+		if(maxResults <= 0 || maxDistance < 0 || Number.isNaN(maxResults) || Number.isNaN(maxDistance)) {
+			return [];
+		}
+
+		interface Node {
+			index: number
+			x: number
+			y: number
+			width: number
+			height: number
+			level: number
+		}
+		maxResults = Math.floor(maxResults);
+		if(maxResults === 0) {
+			return [];
+		}
+		let maxDistanceSquared = maxDistance * maxDistance;
+		if(maxResults === 1) {
+			return this.nearestNeighbor(x, y, maxDistanceSquared, filter);
+		}
+		let candidates: Array<NeighborCandidate> = [];
+		let nodeCandidates: Array<NeighborCandidate> = [];
+		let queue = new MinPriorityQueue<Node>();
+		let root = { index: 0, x: this.rootX, y: this.rootY, width: this.rootWidth, height: this.rootHeight, level: 0 };
+		queue.push(root, distanceSquaredToRect(x, y, this.rootX, this.rootY, this.rootX + this.rootWidth, this.rootY + this.rootHeight));
+
+		while(queue.length > 0 && queue.priority <= candidateLimit(candidates, maxResults, maxDistanceSquared)) {
+			let node = queue.pop();
+			if(node === undefined) {
+				break;
+			}
+			nodeCandidates.length = 0;
+			this.collectNeighborNode(nodeCandidates, node.index, x, y, maxDistanceSquared);
+			for(let candidate of nodeCandidates) {
+				if(filter === undefined || filter(candidate.id)) {
+					addCandidate(candidates, candidate.id, candidate.distance, maxResults);
+				}
+			}
+			if(node.level >= this.maxLevels) {
+				continue;
+			}
+
+			let halfWidth = node.width / 2;
+			let halfHeight = node.height / 2;
+			let childLevel = node.level + 1;
+			let children: Array<Node> = [
+				{ index: node.index * 4 + 1, x: node.x, y: node.y, width: halfWidth, height: halfHeight, level: childLevel },
+				{ index: node.index * 4 + 2, x: node.x + halfWidth, y: node.y, width: halfWidth, height: halfHeight, level: childLevel },
+				{ index: node.index * 4 + 3, x: node.x, y: node.y + halfHeight, width: halfWidth, height: halfHeight, level: childLevel },
+				{ index: node.index * 4 + 4, x: node.x + halfWidth, y: node.y + halfHeight, width: halfWidth, height: halfHeight, level: childLevel },
+			];
+			for(let child of children) {
+				let distance = distanceSquaredToRect(x, y, child.x, child.y, child.x + child.width, child.y + child.height);
+				if(distance <= candidateLimit(candidates, maxResults, maxDistanceSquared)) {
+					queue.push(child, distance);
+				}
+			}
+		}
+
+		return candidates.map(candidate => candidate.id);
+	}
+
+	private nearestNeighbor(
+		x: number, y: number, maxDistanceSquared: number, filter: ((id: number) => boolean) | undefined,
+	): Array<number> {
+		let nearest: NearestNeighbor = { id: undefined, distance: maxDistanceSquared };
+		let nodeCandidates: Array<NeighborCandidate> = [];
+		this.findNearest(
+			0, this.rootX, this.rootY, this.rootWidth, this.rootHeight, 0,
+			x, y, nearest, nodeCandidates, filter,
+		);
+		return nearest.id === undefined ? [] : [nearest.id];
+	}
+
+	private findNearest(
+		node: number, nodeX: number, nodeY: number, width: number, height: number, level: number,
+		x: number, y: number, nearest: NearestNeighbor,
+		nodeCandidates: Array<NeighborCandidate>, filter: ((id: number) => boolean) | undefined,
+	) {
+		if(distanceSquaredToRect(x, y, nodeX, nodeY, nodeX + width, nodeY + height) > nearest.distance) {
+			return;
+		}
+		if(filter === undefined) {
+			this.collectNearestNode(nearest, node, x, y);
+		} else {
+			nodeCandidates.length = 0;
+			this.collectNeighborNode(nodeCandidates, node, x, y, nearest.distance);
+			for(let candidate of nodeCandidates) {
+				if(filter(candidate.id)
+					&& (candidate.distance < nearest.distance
+						|| (candidate.distance === nearest.distance && (nearest.id === undefined || candidate.id < nearest.id)))) {
+					nearest.id = candidate.id;
+					nearest.distance = candidate.distance;
+				}
+			}
+		}
+		if(level >= this.maxLevels) {
+			return;
+		}
+
+		let halfWidth = width / 2;
+		let halfHeight = height / 2;
+		let midX = nodeX + halfWidth;
+		let midY = nodeY + halfHeight;
+		let base = node * 4;
+		let nextLevel = level + 1;
+		let east = x >= midX;
+		let south = y >= midY;
+		let visit = (index: number, childX: number, childY: number) => {
+			this.findNearest(
+				index, childX, childY, halfWidth, halfHeight, nextLevel,
+				x, y, nearest, nodeCandidates, filter,
+			);
+		};
+		if(south) {
+			if(east) {
+				visit(base + 4, midX, midY);
+				visit(base + 3, nodeX, midY);
+				visit(base + 2, midX, nodeY);
+				visit(base + 1, nodeX, nodeY);
+			} else {
+				visit(base + 3, nodeX, midY);
+				visit(base + 4, midX, midY);
+				visit(base + 1, nodeX, nodeY);
+				visit(base + 2, midX, nodeY);
+			}
+		} else if(east) {
+			visit(base + 2, midX, nodeY);
+			visit(base + 1, nodeX, nodeY);
+			visit(base + 4, midX, midY);
+			visit(base + 3, nodeX, midY);
+		} else {
+			visit(base + 1, nodeX, nodeY);
+			visit(base + 2, midX, nodeY);
+			visit(base + 3, nodeX, midY);
+			visit(base + 4, midX, midY);
+		}
 	}
 
 	clear() {
@@ -418,6 +573,55 @@ export default class SharedQuadtree {
 		if(overlapsSouth && overlapsEast) {
 			this.collect(out, node * 4 + 4, midX, midY, hw, hh, level + 1, qx, qy, qw, qh);
 		}
+	}
+
+	private collectNeighborNode(
+		out: Array<NeighborCandidate>, node: number, x: number, y: number, maxDistanceSquared: number,
+	) {
+		let headIndex = node * NODE_SIZE + NODE_HEAD_OFFSET;
+		if(this.nodeHeads[headIndex] === this.nullIndex) {
+			return;
+		}
+		let lockIndex = node * NODE_SIZE + NODE_LOCK_OFFSET;
+		lock(this.nodeInts, lockIndex);
+		let index = this.nodeHeads[headIndex];
+		while(index !== this.nullIndex) {
+			let block = this.pool.blockFor(index);
+			let off = this.pool.blockOffset(index);
+			let id = block[off + ITEM_ID];
+			let distance = distanceSquaredToRect(x, y, block[off + ITEM_X], block[off + ITEM_Y], block[off + ITEM_X] + block[off + ITEM_W], block[off + ITEM_Y] + block[off + ITEM_H]);
+			if(distance <= maxDistanceSquared) {
+				out.push({ id, distance });
+			}
+			index = block[off + ITEM_NEXT];
+		}
+		unlock(this.nodeInts, lockIndex);
+	}
+
+	private collectNearestNode(nearest: NearestNeighbor, node: number, x: number, y: number) {
+		let headIndex = node * NODE_SIZE + NODE_HEAD_OFFSET;
+		if(this.nodeHeads[headIndex] === this.nullIndex) {
+			return;
+		}
+		let lockIndex = node * NODE_SIZE + NODE_LOCK_OFFSET;
+		lock(this.nodeInts, lockIndex);
+		let index = this.nodeHeads[headIndex];
+		while(index !== this.nullIndex) {
+			let block = this.pool.blockFor(index);
+			let off = this.pool.blockOffset(index);
+			let id = block[off + ITEM_ID];
+			let distance = distanceSquaredToRect(
+				x, y, block[off + ITEM_X], block[off + ITEM_Y],
+				block[off + ITEM_X] + block[off + ITEM_W], block[off + ITEM_Y] + block[off + ITEM_H],
+			);
+			if(distance < nearest.distance
+				|| (distance === nearest.distance && (nearest.id === undefined || id < nearest.id))) {
+				nearest.id = id;
+				nearest.distance = distance;
+			}
+			index = block[off + ITEM_NEXT];
+		}
+		unlock(this.nodeInts, lockIndex);
 	}
 
 	private linkIntoNode(node: number, index: number) {

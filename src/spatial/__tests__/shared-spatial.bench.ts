@@ -19,6 +19,7 @@ const GRID_SIZE = WORLD.width / Math.pow(2, MAX_LEVELS);
 const ENTITY_COUNT = 2_000;
 const QUERY_COUNT = 2_000;
 const MOVED_ENTITY_COUNT = ENTITY_COUNT * 0.2;
+const MAX_NEIGHBOR_DISTANCE = 500;
 
 interface Entity {
 	id: number
@@ -108,7 +109,7 @@ describe(`build a tree of ${ENTITY_COUNT} entities`, () => {
 	bench('shared quadtree', () => {
 		buildShared();
 	});
-	bench('shared grid', () => {
+	bench('shared spatial grid', () => {
 		buildGrid();
 	});
 	bench('shared spatial map', () => {
@@ -128,7 +129,7 @@ describe(`${QUERY_COUNT} broad-phase queries`, () => {
 	bench('shared quadtree', () => {
 		for(let query of queries) {
 			out.length = 0;
-			sharedTree.retrieveInto(out, query.x, query.y, query.width, query.height);
+			sharedTree.searchInto(out, query.x, query.y, query.width, query.height);
 		}
 	}, {
 		setup: () => {
@@ -137,10 +138,10 @@ describe(`${QUERY_COUNT} broad-phase queries`, () => {
 	});
 
 	let grid: SharedSpatialGrid;
-	bench('shared grid', () => {
+	bench('shared spatial grid', () => {
 		for(let query of queries) {
 			out.length = 0;
-			grid.retrieveInto(out, query.x, query.y, query.width, query.height);
+			grid.searchInto(out, query.x, query.y, query.width, query.height);
 		}
 	}, {
 		setup: () => {
@@ -152,7 +153,7 @@ describe(`${QUERY_COUNT} broad-phase queries`, () => {
 	bench('shared spatial map', () => {
 		for(let query of queries) {
 			out.length = 0;
-			spatialMap.retrieveInto(out, query.x, query.y, query.width, query.height);
+			spatialMap.searchInto(out, query.x, query.y, query.width, query.height);
 		}
 	}, {
 		setup: () => {
@@ -183,6 +184,57 @@ describe(`${QUERY_COUNT} broad-phase queries`, () => {
 	});
 });
 
+function benchmarkNeighbors(label: string, maxResults: number) {
+	describe(`${QUERY_COUNT} ${label} nearest-neighbor queries`, () => {
+		let sharedTree: SharedQuadtree;
+		bench('shared quadtree', () => {
+			for(let query of queries) {
+				sharedTree.neighbors(query.x, query.y, maxResults, MAX_NEIGHBOR_DISTANCE);
+			}
+		}, {
+			setup: () => {
+				sharedTree = buildShared();
+			},
+		});
+
+		let grid: SharedSpatialGrid;
+		bench('shared spatial grid', () => {
+			for(let query of queries) {
+				grid.neighbors(query.x, query.y, maxResults, MAX_NEIGHBOR_DISTANCE);
+			}
+		}, {
+			setup: () => {
+				grid = buildGrid();
+			},
+		});
+
+		let spatialMap: SharedSpatialMap;
+		bench('shared spatial map', () => {
+			for(let query of queries) {
+				spatialMap.neighbors(query.x, query.y, maxResults, MAX_NEIGHBOR_DISTANCE);
+			}
+		}, {
+			setup: () => {
+				spatialMap = buildSpatialMap();
+			},
+		});
+
+		let flatbush: Flatbush;
+		bench('flatbush', () => {
+			for(let query of queries) {
+				flatbush.neighbors(query.x, query.y, maxResults, MAX_NEIGHBOR_DISTANCE);
+			}
+		}, {
+			setup: () => {
+				flatbush = buildFlatbush();
+			},
+		});
+	});
+}
+
+benchmarkNeighbors('single', 1);
+benchmarkNeighbors('ten', 10);
+
 describe(`move ${MOVED_ENTITY_COUNT} of ${ENTITY_COUNT} entities one step`, () => {
 	let sharedTree: SharedQuadtree;
 	bench('shared quadtree', () => {
@@ -197,7 +249,7 @@ describe(`move ${MOVED_ENTITY_COUNT} of ${ENTITY_COUNT} entities one step`, () =
 	});
 
 	let grid: SharedSpatialGrid;
-	bench('shared grid', () => {
+	bench('shared spatial grid', () => {
 		for(let i = 0; i < MOVED_ENTITY_COUNT; i++) {
 			let entity = entities[i];
 			grid.update(entity.id, entity.x + 3, entity.y + 3, entity.width, entity.height);
@@ -238,7 +290,7 @@ describe(`move all ${ENTITY_COUNT} entities one step`, () => {
 	});
 
 	let grid: SharedSpatialGrid;
-	bench('shared grid', () => {
+	bench('shared spatial grid', () => {
 		for(let entity of entities) {
 			grid.update(entity.id, entity.x + 3, entity.y + 3, entity.width, entity.height);
 		}

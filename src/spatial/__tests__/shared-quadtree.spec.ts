@@ -23,16 +23,16 @@ describe('SharedQuadtree', () => {
 		memory = new MemoryHeap();
 	});
 
-	it('inserts entities and retrieves them by region', () => {
+	it('inserts entities and finds them by region', () => {
 		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
 		tree.insert(1, 100, 100, 10, 10);
 		tree.insert(2, 800, 800, 10, 10);
 
 		expect(tree.size).toEqual(2);
 		// A query over the whole world returns everything
-		expect(new Set(tree.retrieve(0, 0, 1000, 1000))).toEqual(new Set([1, 2]));
+		expect(new Set(tree.search(0, 0, 1000, 1000))).toEqual(new Set([1, 2]));
 		// A query near the first entity returns it and not the far one
-		let near = tree.retrieve(90, 90, 30, 30);
+		let near = tree.search(90, 90, 30, 30);
 		expect(near).toContain(1);
 		expect(near).not.toContain(2);
 	});
@@ -42,20 +42,20 @@ describe('SharedQuadtree', () => {
 		for(let i = 0; i < 50; i++) {
 			tree.insert(i, i * 15, i * 15, 5, 5);
 		}
-		let result = tree.retrieve(0, 0, 1000, 1000);
+		let result = tree.search(0, 0, 1000, 1000);
 		expect(result.length).toEqual(new Set(result).size);
 		expect(result.length).toEqual(50);
 	});
 
 	it('places a large object at a shallow node and still finds it from a small query', () => {
 		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
-		// Spans the whole world -> must live at the root, but a tiny query anywhere still retrieves it
+		// Spans the whole world -> must live at the root, but a tiny query anywhere still finds it
 		tree.insert(1, 0, 0, 1000, 1000);
 		tree.insert(2, 500, 500, 2, 2);
 
-		expect(tree.retrieve(10, 10, 1, 1)).toContain(1);
-		expect(tree.retrieve(950, 950, 1, 1)).toContain(1);
-		expect(tree.retrieve(499, 499, 4, 4)).toEqual(expect.arrayContaining([1, 2]));
+		expect(tree.search(10, 10, 1, 1)).toContain(1);
+		expect(tree.search(950, 950, 1, 1)).toContain(1);
+		expect(tree.search(499, 499, 4, 4)).toEqual(expect.arrayContaining([1, 2]));
 	});
 
 	it('updates an entity in place within the same cell', () => {
@@ -64,17 +64,17 @@ describe('SharedQuadtree', () => {
 		tree.update(1, 110, 110, 10, 10);
 
 		expect(tree.size).toEqual(1);
-		expect(tree.retrieve(105, 105, 20, 20)).toContain(1);
+		expect(tree.search(105, 105, 20, 20)).toContain(1);
 	});
 
 	it('moves an entity across cells so old region no longer sees it', () => {
 		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
 		tree.insert(1, 50, 50, 5, 5);
-		expect(tree.retrieve(40, 40, 30, 30)).toContain(1);
+		expect(tree.search(40, 40, 30, 30)).toContain(1);
 
 		tree.update(1, 900, 900, 5, 5);
-		expect(tree.retrieve(40, 40, 30, 30)).not.toContain(1);
-		expect(tree.retrieve(880, 880, 40, 40)).toContain(1);
+		expect(tree.search(40, 40, 30, 30)).not.toContain(1);
+		expect(tree.search(880, 880, 40, 40)).toContain(1);
 		expect(tree.size).toEqual(1);
 	});
 
@@ -82,7 +82,7 @@ describe('SharedQuadtree', () => {
 		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
 		tree.update(7, 300, 300, 5, 5);
 		expect(tree.has(7)).toBe(true);
-		expect(tree.retrieve(290, 290, 30, 30)).toContain(7);
+		expect(tree.search(290, 290, 30, 30)).toContain(7);
 	});
 
 	it('treats inserting an existing id as an update without leaving a stale entry', () => {
@@ -91,8 +91,8 @@ describe('SharedQuadtree', () => {
 		tree.insert(1, 900, 900, 10, 10);
 
 		expect(tree.size).toEqual(1);
-		expect(tree.retrieve(90, 90, 30, 30)).not.toContain(1);
-		expect(tree.retrieve(890, 890, 30, 30)).toEqual([1]);
+		expect(tree.search(90, 90, 30, 30)).not.toContain(1);
+		expect(tree.search(890, 890, 30, 30)).toEqual([1]);
 	});
 
 	it('keeps only live ids through moves, removals, inserts, and reinserts', () => {
@@ -104,17 +104,17 @@ describe('SharedQuadtree', () => {
 		tree.update(3, 100, 800, 10, 10);
 		tree.insert(1, 100, 100, 10, 10);
 
-		expect(new Set(tree.retrieve(0, 0, 1000, 1000))).toEqual(new Set([1, 3]));
-		expect(tree.retrieve(90, 90, 30, 30)).toContain(1);
-		expect(tree.retrieve(780, 780, 40, 40)).not.toContain(1);
+		expect(new Set(tree.search(0, 0, 1000, 1000))).toEqual(new Set([1, 3]));
+		expect(tree.search(90, 90, 30, 30)).toContain(1);
+		expect(tree.search(780, 780, 40, 40)).not.toContain(1);
 	});
 
 	it('uses the deterministic child at a quadrant midline', () => {
 		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
 		tree.insert(1, 500, 500, 0, 0);
 
-		expect(tree.retrieve(500, 500, 1, 1)).toContain(1);
-		expect(tree.retrieve(499, 499, 1, 1)).not.toContain(1);
+		expect(tree.search(500, 500, 1, 1)).toContain(1);
+		expect(tree.search(499, 499, 1, 1)).not.toContain(1);
 	});
 
 	it('appends candidates into a caller-owned result array', () => {
@@ -122,8 +122,32 @@ describe('SharedQuadtree', () => {
 		tree.insert(1, 100, 100, 10, 10);
 		let result = [99];
 
-		expect(tree.retrieveInto(result, 90, 90, 30, 30)).toBe(result);
+		expect(tree.searchInto(result, 90, 90, 30, 30)).toBe(result);
 		expect(result).toEqual([99, 1]);
+	});
+
+	it('filters search candidates by id', () => {
+		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
+		tree.insert(1, 100, 100, 10, 10);
+		tree.insert(2, 105, 105, 10, 10);
+
+		expect(tree.search(90, 90, 40, 40, (id) => id === 2)).toEqual([2]);
+
+		let result = [99];
+		expect(tree.searchInto(result, 90, 90, 40, 40, (id) => id === 1)).toBe(result);
+		expect(result).toEqual([99, 1]);
+	});
+
+	it('finds nearest entities in distance order with limits and filtering', () => {
+		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
+		tree.insert(1, 100, 100, 10, 10);
+		tree.insert(2, 130, 100, 10, 10);
+		tree.insert(3, 250, 100, 10, 10);
+
+		expect(tree.neighbors(105, 105, 2, 200)).toEqual([1, 2]);
+		expect(tree.neighbors(105, 105, 3, 20)).toEqual([1]);
+		expect(tree.neighbors(105, 105, 2, 200, id => id !== 1)).toEqual([2, 3]);
+		expect(tree.neighbors(105, 105, 0, 200)).toEqual([]);
 	});
 
 	it('removes entities and recycles their slots', () => {
@@ -137,7 +161,7 @@ describe('SharedQuadtree', () => {
 		expect(tree.has(2)).toBe(false);
 		expect(tree.size).toEqual(2);
 
-		let result = tree.retrieve(90, 90, 30, 30);
+		let result = tree.search(90, 90, 30, 30);
 		expect(new Set(result)).toEqual(new Set([1, 3]));
 	});
 
@@ -151,7 +175,7 @@ describe('SharedQuadtree', () => {
 		tree.remove(1); // oldest = tail
 		tree.remove(3); // middle
 
-		expect(new Set(tree.retrieve(499, 499, 4, 4))).toEqual(new Set([2, 4]));
+		expect(new Set(tree.search(499, 499, 4, 4))).toEqual(new Set([2, 4]));
 		expect(tree.size).toEqual(2);
 	});
 
@@ -162,10 +186,10 @@ describe('SharedQuadtree', () => {
 		}
 		tree.clear();
 		expect(tree.size).toEqual(0);
-		expect(tree.retrieve(0, 0, 1000, 1000)).toEqual([]);
+		expect(tree.search(0, 0, 1000, 1000)).toEqual([]);
 
 		tree.insert(99, 500, 500, 5, 5);
-		expect(tree.retrieve(0, 0, 1000, 1000)).toEqual([99]);
+		expect(tree.search(0, 0, 1000, 1000)).toEqual([99]);
 	});
 
 	it('a second instance over the same shared memory sees inserts and updates', () => {
@@ -173,18 +197,18 @@ describe('SharedQuadtree', () => {
 		let clone = new SharedQuadtree(memory, main.getSharedMemory());
 
 		main.insert(1, 100, 100, 5, 5);
-		expect(clone.retrieve(90, 90, 30, 30)).toContain(1);
+		expect(clone.search(90, 90, 30, 30)).toContain(1);
 		expect(clone.size).toEqual(1);
 
 		clone.update(1, 900, 900, 5, 5);
-		expect(main.retrieve(880, 880, 40, 40)).toContain(1);
-		expect(main.retrieve(90, 90, 30, 30)).not.toContain(1);
+		expect(main.search(880, 880, 40, 40)).toContain(1);
+		expect(main.search(90, 90, 30, 30)).not.toContain(1);
 
 		clone.insert(2, 500, 500, 5, 5);
 		expect(main.has(2)).toBe(true);
 	});
 
-	it('retrieve returns every true overlap (randomized cross-check against brute force)', () => {
+	it('search returns every true overlap (randomized cross-check against brute force)', () => {
 		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 6 });
 		let rects: Array<Rect> = [];
 
@@ -219,7 +243,7 @@ describe('SharedQuadtree', () => {
 				height,
 			};
 
-			let found = new Set(tree.retrieve(query.x, query.y, query.width, query.height));
+			let found = new Set(tree.search(query.x, query.y, query.width, query.height));
 			let expected = rects.filter(rect => overlaps(rect, query)).map(rect => rect.id);
 			for(let id of expected) {
 				expect(found.has(id)).toBe(true);
@@ -251,7 +275,7 @@ describe('SharedQuadtree', () => {
 			let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5, type: Float64Array });
 			let bigId = 2 ** 40 + 7;
 			tree.insert(bigId, 100, 100, 10, 10);
-			expect(tree.retrieve(90, 90, 30, 30)).toContain(bigId);
+			expect(tree.search(90, 90, 30, 30)).toContain(bigId);
 		});
 
 		it('a second instance over the same memory reports the same type', () => {
@@ -260,12 +284,12 @@ describe('SharedQuadtree', () => {
 			expect(clone.type).toEqual(ARRAY_TYPE.float64);
 		});
 
-		it('still inserts and retrieves with float64 coordinates', () => {
+		it('still inserts and finds with float64 coordinates', () => {
 			let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5, type: Float64Array });
 			tree.insert(1, 100, 100, 10, 10);
 			tree.update(1, 900, 900, 10, 10);
-			expect(tree.retrieve(880, 880, 40, 40)).toContain(1);
-			expect(tree.retrieve(90, 90, 30, 30)).not.toContain(1);
+			expect(tree.search(880, 880, 40, 40)).toContain(1);
+			expect(tree.search(90, 90, 30, 30)).not.toContain(1);
 		});
 	});
 

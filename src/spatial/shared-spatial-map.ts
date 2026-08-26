@@ -6,6 +6,9 @@ import SharedMap from '../shared-map';
 import { lock, unlock } from '../lock/simple-lock';
 import { getPointer, loadRawPointer, storeRawPointer } from '../utils/pointer';
 import { ARRAY_TYPE, getArrayTypeCode, getByteMultipler, makeArrayView } from '../utils/array-type';
+import {
+	addCandidate, candidateLimit, distanceSquaredToRect, type NeighborCandidate, type NearestNeighbor,
+} from './spatial-neighbors';
 
 // Unbounded spatial hash ("spatial multimap") built for concurrent updates from many threads. It indexes the same way
 // SharedSpatialGrid does - every entity occupies each virtual cell (of side gridSize) its rect overlaps - but it drops
@@ -23,7 +26,7 @@ import { ARRAY_TYPE, getArrayTypeCode, getByteMultipler, makeArrayView } from '.
 // entity's occupied cell rectangle is stored once in a separate entity pool, keyed by an id->entityIndex SharedMap, so
 // remove(id) (which only gets an id) knows which cells to unlink from.
 //
-// retrieve returns each entity at most once even though it spans multiple cells: every slot carries the entity's anchor
+// search returns each entity at most once even though it spans multiple cells: every slot carries the entity's anchor
 // (top-left) cell, and a slot only emits its id when its cell is the top-left cell of the entity that intersects the query
 // (col == max(anchorCol, qMinCol) && row == max(anchorRow, qMinRow)). That cell is always one of the entity's cells and
 // inside the query, so exactly one slot emits - no Set and no per-query mutation, so concurrent queries stay safe.
@@ -62,7 +65,11 @@ const ENTITY_MIN_COL = 0;
 const ENTITY_MIN_ROW = 1;
 const ENTITY_MAX_COL = 2;
 const ENTITY_MAX_ROW = 3;
-const ENTITY_FIELDS = 4;
+const ENTITY_X = 4;
+const ENTITY_Y = 5;
+const ENTITY_WIDTH = 6;
+const ENTITY_HEIGHT = 7;
+const ENTITY_FIELDS = 8;
 
 // Largest exact integer range for Float32 coordinates: [0, 2^24). Ids and pool indices must stay under this to survive a
 // Float32 round-trip, so it doubles as the Float32 entity cap and the value just past every valid index.
@@ -97,7 +104,7 @@ export default class SharedSpatialMap {
 	private idMap: SharedMap<number>;
 
 	// Reused to hand a full record to pool.push without allocating a fresh array per operation (single writer per id)
-	private entityScratch: Array<number> = [0, 0, 0, 0];
+	private entityScratch: Array<number> = [0, 0, 0, 0, 0, 0, 0, 0];
 	private slotScratch: Array<number> = [0, 0, 0, 0, 0, 0];
 
 	// Bucket block views over one contiguous region: Int32 for the per-bucket locks, Uint32 for the head indexes.
@@ -239,6 +246,10 @@ export default class SharedSpatialMap {
 		entity[ENTITY_MIN_ROW] = minRow;
 		entity[ENTITY_MAX_COL] = maxCol;
 		entity[ENTITY_MAX_ROW] = maxRow;
+		entity[ENTITY_X] = x;
+		entity[ENTITY_Y] = y;
+		entity[ENTITY_WIDTH] = width;
+		entity[ENTITY_HEIGHT] = height;
 		let entityIndex = this.entityPool.push(entity);
 		this.idMap.set(id, entityIndex);
 
@@ -266,9 +277,12 @@ export default class SharedSpatialMap {
 		let maxCol = this.colOf(x + width);
 		let maxRow = this.rowOf(y + height);
 
-		// Same cell rectangle: membership is unchanged (query results depend only on which cells the entity occupies, not on
-		// its exact coordinates), so there is nothing to relink.
+		// Same cell rectangle: membership is unchanged, but neighbors still needs the new exact rectangle.
 		if(minCol === oldMinCol && minRow === oldMinRow && maxCol === oldMaxCol && maxRow === oldMaxRow) {
+			block[off + ENTITY_X] = x;
+			block[off + ENTITY_Y] = y;
+			block[off + ENTITY_WIDTH] = width;
+			block[off + ENTITY_HEIGHT] = height;
 			return;
 		}
 
@@ -278,6 +292,10 @@ export default class SharedSpatialMap {
 		block[off + ENTITY_MIN_ROW] = minRow;
 		block[off + ENTITY_MAX_COL] = maxCol;
 		block[off + ENTITY_MAX_ROW] = maxRow;
+		block[off + ENTITY_X] = x;
+		block[off + ENTITY_Y] = y;
+		block[off + ENTITY_WIDTH] = width;
+		block[off + ENTITY_HEIGHT] = height;
 	}
 
 	remove(id: number): boolean {
@@ -301,13 +319,14 @@ export default class SharedSpatialMap {
 
 	// Broad-phase query: ids of every entity occupying a cell that overlaps the query rect. Each entity is returned at most
 	// once (see the anchor-cell dedup in collectBucket); the caller does the narrow-phase overlap check.
-	retrieve(x: number, y: number, width: number, height: number): Array<number> {
+	search(x: number, y: number, width: number, height: number, filter?: (id: number) => boolean): Array<number> {
 		let out: Array<number> = [];
-		this.retrieveInto(out, x, y, width, height);
+		this.searchInto(out, x, y, width, height, filter);
 		return out;
 	}
-	// Same as retrieve but appends into a caller-owned array so hot loops can reuse it. Returns the array.
-	retrieveInto(out: Array<number>, x: number, y: number, width: number, height: number): Array<number> {
+	// Same as search but appends into a caller-owned array so hot loops can reuse it. Returns the array.
+	searchInto(out: Array<number>, x: number, y: number, width: number, height: number, filter?: (id: number) => boolean): Array<number> {
+		let start = out.length;
 		let qMinCol = this.colOf(x);
 		let qMinRow = this.rowOf(y);
 		let qMaxCol = this.colOf(x + width);
@@ -326,7 +345,96 @@ export default class SharedSpatialMap {
 				this.collectBucket(out, bucket, col, row, qMinCol, qMinRow);
 			}
 		}
+		if(filter !== undefined) {
+			let write = start;
+			for(let read = start; read < out.length; read++) {
+				let id = out[read];
+				if(filter(id)) {
+					out[write++] = id;
+				}
+			}
+			out.length = write;
+		}
 		return out;
+	}
+
+	neighbors(x: number, y: number, maxResults: number, maxDistance: number, filter?: (id: number) => boolean): Array<number> {
+		if(maxResults <= 0 || maxDistance < 0 || Number.isNaN(maxResults) || Number.isNaN(maxDistance)) {
+			return [];
+		}
+
+		maxResults = Math.floor(maxResults);
+		if(maxResults === 0) {
+			return [];
+		}
+		let maxDistanceSquared = maxDistance * maxDistance;
+		let candidates: Array<NeighborCandidate> = [];
+		if(!Number.isFinite(maxDistance)) {
+			for(let [id, entityIndex] of this.idMap) {
+				if(filter === undefined || filter(id)) {
+					this.addEntityCandidate(candidates, id, entityIndex, x, y, maxResults, maxDistanceSquared);
+				}
+			}
+			return candidates.map(candidate => candidate.id);
+		}
+
+		let cellIds: Array<number> = [];
+		let seenEntities = maxResults > 1 ? new Set<number>() : undefined;
+		let startCol = this.colOf(x);
+		let startRow = this.rowOf(y);
+		let nearest: NearestNeighbor = { id: undefined, distance: maxDistanceSquared };
+		let visit = (col: number, row: number) => {
+			if(maxResults === 1 && filter === undefined) {
+				this.collectNearestBucket(nearest, col, row, x, y);
+				return;
+			}
+			cellIds.length = 0;
+			this.collectNeighborBucket(cellIds, col, row);
+			for(let id of cellIds) {
+				if(seenEntities?.has(id)) {
+					continue;
+				}
+				seenEntities?.add(id);
+				let entityIndex = this.idMap.get(id);
+				if(entityIndex !== undefined && (filter === undefined || filter(id))) {
+					if(maxResults === 1) {
+						let distance = this.entityDistanceSquared(entityIndex, x, y);
+						if(distance < nearest.distance
+							|| (distance === nearest.distance && (nearest.id === undefined || id < nearest.id))) {
+							nearest.id = id;
+							nearest.distance = distance;
+						}
+					} else {
+						this.addEntityCandidate(candidates, id, entityIndex, x, y, maxResults, maxDistanceSquared);
+					}
+				}
+			}
+		};
+
+		for(let radius = 0; ; radius++) {
+			let limit = maxResults === 1 ? nearest.distance : candidateLimit(candidates, maxResults, maxDistanceSquared);
+			if(this.mapRingDistanceSquared(x, y, startCol, startRow, radius) > limit) {
+				break;
+			}
+			if(radius === 0) {
+				visit(startCol, startRow);
+				continue;
+			}
+			let minCol = startCol - radius;
+			let maxCol = startCol + radius;
+			let top = startRow - radius;
+			let bottom = startRow + radius;
+			for(let col = minCol; col <= maxCol; col++) {
+				visit(col, top);
+				visit(col, bottom);
+			}
+			for(let row = top + 1; row < bottom; row++) {
+				visit(minCol, row);
+				visit(maxCol, row);
+			}
+		}
+
+		return maxResults === 1 ? nearest.id === undefined ? [] : [nearest.id] : candidates.map(candidate => candidate.id);
 	}
 
 	clear() {
@@ -374,6 +482,18 @@ export default class SharedSpatialMap {
 	}
 	private rowOf(y: number): number {
 		return Math.floor(y / this.cellSize);
+	}
+	private mapRingDistanceSquared(x: number, y: number, centerCol: number, centerRow: number, radius: number): number {
+		if(radius === 0) {
+			return 0;
+		}
+		let cellSize = this.cellSize;
+		let left = x - (centerCol - radius + 1) * cellSize;
+		let right = (centerCol + radius) * cellSize - x;
+		let top = y - (centerRow - radius + 1) * cellSize;
+		let bottom = (centerRow + radius) * cellSize - y;
+		let distance = Math.min(left, right, top, bottom);
+		return distance * distance;
 	}
 	// Hash a virtual cell to one of the fixed buckets. col/row may be negative, so keep the mix unsigned before the modulo.
 	private bucketOf(col: number, row: number): number {
@@ -525,6 +645,72 @@ export default class SharedSpatialMap {
 			index = block[off + SLOT_NEXT];
 		}
 		unlock(bucketInts, lockIndex);
+	}
+
+	private collectNeighborBucket(out: Array<number>, col: number, row: number) {
+		let bucket = this.bucketOf(col, row);
+		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
+		if(this.bucketHeads[headIndex] === this.nullIndex) {
+			return;
+		}
+		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
+		lock(this.bucketInts, lockIndex);
+		let index = this.bucketHeads[headIndex];
+		while(index !== this.nullIndex) {
+			let block = this.slotPool.blockFor(index);
+			let off = this.slotPool.blockOffset(index);
+			if(block[off + SLOT_COL] === col && block[off + SLOT_ROW] === row) {
+				out.push(block[off + SLOT_ID]);
+			}
+			index = block[off + SLOT_NEXT];
+		}
+		unlock(this.bucketInts, lockIndex);
+	}
+
+	private collectNearestBucket(nearest: NearestNeighbor, col: number, row: number, x: number, y: number) {
+		let bucket = this.bucketOf(col, row);
+		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
+		if(this.bucketHeads[headIndex] === this.nullIndex) {
+			return;
+		}
+		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
+		lock(this.bucketInts, lockIndex);
+		let index = this.bucketHeads[headIndex];
+		while(index !== this.nullIndex) {
+			let slot = this.slotPool.blockFor(index);
+			let off = this.slotPool.blockOffset(index);
+			if(slot[off + SLOT_COL] === col && slot[off + SLOT_ROW] === row) {
+				let id = slot[off + SLOT_ID];
+				let entityIndex = this.idMap.get(id);
+				if(entityIndex !== undefined) {
+					let distance = this.entityDistanceSquared(entityIndex, x, y);
+					if(distance < nearest.distance
+						|| (distance === nearest.distance && (nearest.id === undefined || id < nearest.id))) {
+						nearest.id = id;
+						nearest.distance = distance;
+					}
+				}
+			}
+			index = slot[off + SLOT_NEXT];
+		}
+		unlock(this.bucketInts, lockIndex);
+	}
+
+	private addEntityCandidate(candidates: Array<NeighborCandidate>, id: number, entityIndex: number, x: number, y: number, maxResults: number, maxDistanceSquared: number) {
+		let distance = this.entityDistanceSquared(entityIndex, x, y);
+		if(distance <= maxDistanceSquared) {
+			addCandidate(candidates, id, distance, maxResults);
+		}
+	}
+
+	private entityDistanceSquared(entityIndex: number, x: number, y: number): number {
+		let entity = this.entityPool.blockFor(entityIndex);
+		let off = this.entityPool.blockOffset(entityIndex);
+		let minX = entity[off + ENTITY_X];
+		let minY = entity[off + ENTITY_Y];
+		return distanceSquaredToRect(
+			x, y, minX, minY, minX + entity[off + ENTITY_WIDTH], minY + entity[off + ENTITY_HEIGHT],
+		);
 	}
 
 	// Splice this entity's slot for exactly cell (col, row) out of the bucket and return its index (nullIndex if absent).

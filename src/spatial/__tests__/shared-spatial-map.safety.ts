@@ -39,6 +39,9 @@ describe('SharedSpatialMap thread safety', () => {
 			updateRounds: UPDATE_ROUNDS,
 		});
 
-		expect(result).toEqual(expectedSpatialResult(WORKER_COUNT * INSERT_PER_WORKER));
+		expect(result).toEqual(expectedSpatialResult(
+			WORKER_COUNT * INSERT_PER_WORKER,
+			WORKER_COUNT * UPDATE_ROUNDS,
+		));
 	});
 });

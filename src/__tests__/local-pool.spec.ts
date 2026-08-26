@@ -160,7 +160,7 @@ describe('LocalPool', () => {
 		vector.push(4.5);
 		vector.push(13.5);
 		vector.push(6);
-		// JS uses Float64 for numbers by default, so we should be able to store/retrieve max sized numbers like normal
+		// JS uses Float64 for numbers by default, so we should be able to store/search max sized numbers like normal
 		vector.push(Number.MAX_SAFE_INTEGER);
 		vector.push(Number.MAX_VALUE);
 

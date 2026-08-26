@@ -5,7 +5,7 @@ import SharedSpatialGrid from '../../shared-spatial-grid';
 import SharedSpatialMap from '../../shared-spatial-map';
 import type { SharedAllocatedMemory } from '../../../allocated-memory';
 
-// One worker for all three spatial structures: they share the insert/update/remove/retrieve surface, so the only thing
+// One worker for all three spatial structures: they share the insert/update/remove/search surface, so the only thing
 // that differs is which constructor the `kind` picks.
 export type SpatialKind = 'quadtree' | 'grid' | 'map';
 
@@ -21,6 +21,8 @@ interface SpatialWorkerData {
 	heap: MemoryHeapMemory
 	structure: { firstBlock: SharedAllocatedMemory }
 	idBase: number
+	idRange: number
+	workerCount: number
 	insertCount: number
 	updateRounds: number
 	world: { x: number, y: number, width: number, height: number }
@@ -28,7 +30,9 @@ interface SpatialWorkerData {
 
 const SIZE = 16;
 
-const { kind, heap: heapMemory, structure: structureMemory, idBase, insertCount, updateRounds, world } = workerData as SpatialWorkerData;
+const {
+	kind, heap: heapMemory, structure: structureMemory, idBase, idRange, workerCount, insertCount, updateRounds, world,
+} = workerData as SpatialWorkerData;
 const port = parentPort!;
 
 const heap = new MemoryHeap(heapMemory);
@@ -48,6 +52,8 @@ function randomPosition(entity: Placed) {
 }
 
 function run() {
+	let neighborQueries = 0;
+	let validNeighborQueries = 0;
 	for(let i = 0; i < insertCount; i++) {
 		let entity = { id: idBase + i, x: 0, y: 0, width: SIZE, height: SIZE };
 		randomPosition(entity);
@@ -62,6 +68,24 @@ function run() {
 			structure.update(entity.id, entity.x, entity.y, entity.width, entity.height);
 		}
 
+		let filterEven = round % 2 === 0;
+		let neighbors = structure.neighbors(
+			Math.random() * world.width, Math.random() * world.height, 16, 250,
+			filterEven ? id => id % 2 === 0 : undefined,
+		);
+		let unique = new Set(neighbors);
+		let valid = neighbors.length <= 16 && unique.size === neighbors.length && neighbors.every(id => {
+			let workerNumber = Math.floor(id / idRange);
+			let offset = id - workerNumber * idRange;
+			return workerNumber >= 1 && workerNumber <= workerCount
+				&& offset >= 0 && offset < insertCount
+				&& (!filterEven || id % 2 === 0);
+		});
+		neighborQueries++;
+		if(valid) {
+			validNeighborQueries++;
+		}
+
 		let removeAt = Math.floor(Math.random() * live.length);
 		let entity = live[removeAt];
 		structure.remove(entity.id);
@@ -69,20 +93,27 @@ function run() {
 		structure.insert(entity.id, entity.x, entity.y, entity.width, entity.height);
 	}
 
-	port.postMessage({ done: true, expectedCount: live.length });
+	port.postMessage({ done: true, expectedCount: live.length, neighborQueries, validNeighborQueries });
 }
 
 function check() {
 	let missing: Array<number> = [];
+	let missingNeighbors: Array<number> = [];
 	for(let entity of live) {
 		// A tiny query around the last-known position must return this entity
-		let found = structure.retrieve(entity.x - 1, entity.y - 1, entity.width + 2, entity.height + 2);
+		let found = structure.search(entity.x - 1, entity.y - 1, entity.width + 2, entity.height + 2);
 		if(!found.includes(entity.id)) {
 			missing.push(entity.id);
 		}
+		let nearest = structure.neighbors(
+			entity.x + entity.width / 2, entity.y + entity.height / 2, 1, 0, id => id === entity.id,
+		);
+		if(nearest[0] !== entity.id) {
+			missingNeighbors.push(entity.id);
+		}
 	}
 
-	port.postMessage({ checked: true, missing, total: live.length });
+	port.postMessage({ checked: true, missing, missingNeighbors, total: live.length });
 }
 
 port.on('message', (message: { run?: boolean, check?: boolean }) => {

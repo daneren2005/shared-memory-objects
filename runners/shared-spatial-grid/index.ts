@@ -8,7 +8,7 @@ captureGlobalErrors();
 
 // Each worker owns a disjoint id range (worker N owns [N * ID_RANGE, N * ID_RANGE + INSERT_PER_WORKER)) so every entity
 // has exactly one writer - the standard shared-memory pattern. Workers insert their own entities and then move them
-// around the world for several rounds, all concurrently, hammering the per-cell locks. Afterwards a full-world retrieve
+// around the world for several rounds, all concurrently, hammering the per-cell locks. Afterwards a full-world search
 // must return exactly the surviving ids, each valid and unique: a torn link, lost update, or dropped multi-cell slot
 // would show up as a garbage id, a duplicate, or a count mismatch.
 const WORKER_COUNT = 8;
@@ -82,12 +82,12 @@ function checkIfDone() {
 
 	// A full-world query returns every stored id. Each must be unique and fall inside some worker's id range - anything
 	// else means a corrupted bucket link or a torn slot record.
-	let all = grid.retrieve(WORLD.x, WORLD.y, WORLD.width, WORLD.height);
+	let all = grid.search(WORLD.x, WORLD.y, WORLD.width, WORLD.height);
 	let unique = new Set(all);
 	if(unique.size !== all.length) {
-		warn(`full-world retrieve returned ${all.length} ids but only ${unique.size} unique (duplicated bucket link)`);
+		warn(`full-world search returned ${all.length} ids but only ${unique.size} unique (duplicated bucket link)`);
 	} else {
-		log(`full-world retrieve returned ${all.length} unique ids`);
+		log(`full-world search returned ${all.length} unique ids`);
 	}
 
 	let outOfRange = 0;

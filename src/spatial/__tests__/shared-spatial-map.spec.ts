@@ -21,14 +21,14 @@ describe('SharedSpatialMap', () => {
 		memory = new MemoryHeap();
 	});
 
-	it('inserts entities and retrieves them by region', () => {
+	it('inserts entities and finds them by region', () => {
 		let map = new SharedSpatialMap(memory, { gridSize: 50 });
 		map.insert(1, 100, 100, 10, 10);
 		map.insert(2, 800, 800, 10, 10);
 
 		expect(map.size).toEqual(2);
-		expect(new Set(map.retrieve(0, 0, 1000, 1000))).toEqual(new Set([1, 2]));
-		let near = map.retrieve(90, 90, 30, 30);
+		expect(new Set(map.search(0, 0, 1000, 1000))).toEqual(new Set([1, 2]));
+		let near = map.search(90, 90, 30, 30);
 		expect(near).toContain(1);
 		expect(near).not.toContain(2);
 	});
@@ -38,9 +38,9 @@ describe('SharedSpatialMap', () => {
 		map.insert(1, -5000, -5000, 10, 10);
 		map.insert(2, 1_000_000, 1_000_000, 10, 10);
 
-		expect(map.retrieve(-5010, -5010, 30, 30)).toContain(1);
-		expect(map.retrieve(999_990, 999_990, 30, 30)).toContain(2);
-		expect(map.retrieve(-5010, -5010, 30, 30)).not.toContain(2);
+		expect(map.search(-5010, -5010, 30, 30)).toContain(1);
+		expect(map.search(999_990, 999_990, 30, 30)).toContain(2);
+		expect(map.search(-5010, -5010, 30, 30)).not.toContain(2);
 		expect(map.size).toEqual(2);
 	});
 
@@ -49,7 +49,7 @@ describe('SharedSpatialMap', () => {
 		for(let i = 0; i < 50; i++) {
 			map.insert(i, i * 15, i * 15, 5, 5);
 		}
-		let result = map.retrieve(0, 0, 1000, 1000);
+		let result = map.search(0, 0, 1000, 1000);
 		expect(result.length).toEqual(new Set(result).size);
 		expect(result.length).toEqual(50);
 	});
@@ -59,10 +59,10 @@ describe('SharedSpatialMap', () => {
 		map.insert(1, 0, 0, 1000, 1000);
 		map.insert(2, 500, 500, 2, 2);
 
-		expect(map.retrieve(10, 10, 1, 1)).toContain(1);
-		expect(map.retrieve(950, 950, 1, 1)).toContain(1);
+		expect(map.search(10, 10, 1, 1)).toContain(1);
+		expect(map.search(950, 950, 1, 1)).toContain(1);
 
-		let wide = map.retrieve(100, 100, 800, 800);
+		let wide = map.search(100, 100, 800, 800);
 		expect(wide.filter(id => id === 1).length).toEqual(1);
 		expect(new Set(wide)).toEqual(new Set([1, 2]));
 	});
@@ -72,9 +72,9 @@ describe('SharedSpatialMap', () => {
 		// Straddles the boundary between the (0,0) and (1,0) cells -> lives in both
 		map.insert(1, 45, 20, 10, 10);
 
-		expect(map.retrieve(40, 20, 5, 5)).toContain(1);
-		expect(map.retrieve(52, 20, 5, 5)).toContain(1);
-		let both = map.retrieve(40, 20, 30, 10);
+		expect(map.search(40, 20, 5, 5)).toContain(1);
+		expect(map.search(52, 20, 5, 5)).toContain(1);
+		let both = map.search(40, 20, 30, 10);
 		expect(both.filter(id => id === 1).length).toEqual(1);
 	});
 
@@ -84,28 +84,28 @@ describe('SharedSpatialMap', () => {
 		map.update(1, 110, 110, 10, 10);
 
 		expect(map.size).toEqual(1);
-		expect(map.retrieve(105, 105, 20, 20)).toContain(1);
+		expect(map.search(105, 105, 20, 20)).toContain(1);
 	});
 
 	it('moves an entity across cells so old region no longer sees it', () => {
 		let map = new SharedSpatialMap(memory, { gridSize: 50 });
 		map.insert(1, 50, 50, 5, 5);
-		expect(map.retrieve(40, 40, 30, 30)).toContain(1);
+		expect(map.search(40, 40, 30, 30)).toContain(1);
 
 		map.update(1, 900, 900, 5, 5);
-		expect(map.retrieve(40, 40, 30, 30)).not.toContain(1);
-		expect(map.retrieve(880, 880, 40, 40)).toContain(1);
+		expect(map.search(40, 40, 30, 30)).not.toContain(1);
+		expect(map.search(880, 880, 40, 40)).toContain(1);
 		expect(map.size).toEqual(1);
 	});
 
 	it('shrinks a multi-cell entity down to one cell and no longer sees it in the vacated cells', () => {
 		let map = new SharedSpatialMap(memory, { gridSize: 50 });
 		map.insert(1, 40, 40, 120, 120); // spans several cells
-		expect(map.retrieve(140, 140, 5, 5)).toContain(1);
+		expect(map.search(140, 140, 5, 5)).toContain(1);
 
 		map.update(1, 40, 40, 5, 5); // now a single cell
-		expect(map.retrieve(140, 140, 5, 5)).not.toContain(1);
-		expect(map.retrieve(40, 40, 5, 5)).toContain(1);
+		expect(map.search(140, 140, 5, 5)).not.toContain(1);
+		expect(map.search(40, 40, 5, 5)).toContain(1);
 		expect(map.size).toEqual(1);
 	});
 
@@ -119,7 +119,7 @@ describe('SharedSpatialMap', () => {
 			map.insert(1, 95, 5, 20, 0); // cols 1..2, row 0 -> anchor cell (1,0)
 			map.update(1, 45, 5, 20, 0); // cols 0..1, row 0 -> overlap is col 1 (non-anchor), anchor moves to (0,0)
 
-			let all = map.retrieve(0, 0, 1000, 1000);
+			let all = map.search(0, 0, 1000, 1000);
 			expect(all.filter(id => id === 1).length).toEqual(1);
 			expect(new Set(all)).toEqual(new Set([1]));
 			expect(map.size).toEqual(1);
@@ -130,7 +130,7 @@ describe('SharedSpatialMap', () => {
 			map.insert(1, 45, 5, 20, 0); // cols 0..1, row 0 -> anchor cell (0,0)
 			map.update(1, 95, 5, 20, 0); // cols 1..2, row 0 -> new anchor cell (1,0) is in the overlap
 
-			let all = map.retrieve(0, 0, 1000, 1000);
+			let all = map.search(0, 0, 1000, 1000);
 			expect(all.filter(id => id === 1).length).toEqual(1);
 			expect(new Set(all)).toEqual(new Set([1]));
 			expect(map.size).toEqual(1);
@@ -141,11 +141,11 @@ describe('SharedSpatialMap', () => {
 			map.insert(1, 95, 95, 20, 20); // cols 1..2, rows 1..2
 			map.update(1, 45, 45, 20, 20); // cols 0..1, rows 0..1 -> overlap is the single cell (1,1)
 
-			let all = map.retrieve(0, 0, 1000, 1000);
+			let all = map.search(0, 0, 1000, 1000);
 			expect(all.filter(id => id === 1).length).toEqual(1);
 			expect(map.size).toEqual(1);
-			expect(map.retrieve(45, 45, 5, 5)).toContain(1); // still at the new spot
-			expect(map.retrieve(110, 110, 4, 4)).not.toContain(1); // gone from the old-only corner
+			expect(map.search(45, 45, 5, 5)).toContain(1); // still at the new spot
+			expect(map.search(110, 110, 4, 4)).not.toContain(1); // gone from the old-only corner
 		});
 
 		it('keeps a single slot even when the two overlap cells collide onto one bucket', () => {
@@ -154,9 +154,9 @@ describe('SharedSpatialMap', () => {
 			let map = new SharedSpatialMap(memory, { gridSize: 50, buckets: 1 });
 			map.insert(1, 95, 5, 20, 0);
 			map.update(1, 45, 5, 20, 0);
-			expect(map.retrieve(0, 0, 1000, 1000)).toEqual([1]);
+			expect(map.search(0, 0, 1000, 1000)).toEqual([1]);
 			map.update(1, 95, 5, 20, 0);
-			expect(map.retrieve(0, 0, 1000, 1000)).toEqual([1]);
+			expect(map.search(0, 0, 1000, 1000)).toEqual([1]);
 			expect(map.size).toEqual(1);
 		});
 
@@ -171,7 +171,7 @@ describe('SharedSpatialMap', () => {
 			};
 			for(let i = 0; i < 500; i++) {
 				map.update(1, 40 + rand() * 60, 40 + rand() * 60, 20, 20);
-				let all = map.retrieve(0, 0, 1000, 1000);
+				let all = map.search(0, 0, 1000, 1000);
 				expect(all).toEqual([1]);
 			}
 			expect(map.size).toEqual(1);
@@ -182,7 +182,7 @@ describe('SharedSpatialMap', () => {
 		let map = new SharedSpatialMap(memory, { gridSize: 50 });
 		map.update(7, 300, 300, 5, 5);
 		expect(map.has(7)).toBe(true);
-		expect(map.retrieve(290, 290, 30, 30)).toContain(7);
+		expect(map.search(290, 290, 30, 30)).toContain(7);
 	});
 
 	it('treats inserting an existing id as an update without leaving stale slots', () => {
@@ -191,8 +191,8 @@ describe('SharedSpatialMap', () => {
 		map.insert(1, 900, 900, 10, 10);
 
 		expect(map.size).toEqual(1);
-		expect(map.retrieve(100, 100, 10, 10)).not.toContain(1);
-		expect(map.retrieve(890, 890, 30, 30)).toEqual([1]);
+		expect(map.search(100, 100, 10, 10)).not.toContain(1);
+		expect(map.search(890, 890, 30, 30)).toEqual([1]);
 	});
 
 	it('keeps only live ids through moves, removals, inserts, and reinserts', () => {
@@ -204,9 +204,9 @@ describe('SharedSpatialMap', () => {
 		map.update(3, 100, 800, 10, 10);
 		map.insert(1, 100, 100, 10, 10);
 
-		expect(new Set(map.retrieve(0, 0, 1000, 1000))).toEqual(new Set([1, 3]));
-		expect(map.retrieve(90, 90, 30, 30)).toContain(1);
-		expect(map.retrieve(780, 780, 40, 40)).not.toContain(1);
+		expect(new Set(map.search(0, 0, 1000, 1000))).toEqual(new Set([1, 3]));
+		expect(map.search(90, 90, 30, 30)).toContain(1);
+		expect(map.search(780, 780, 40, 40)).not.toContain(1);
 	});
 
 	it('updates across negative cell boundaries even when cells share a bucket', () => {
@@ -214,10 +214,10 @@ describe('SharedSpatialMap', () => {
 		map.insert(1, -51, -1, 2, 2);
 		map.update(1, -1, -51, 2, 2);
 
-		expect(map.retrieve(-90, -10, 10, 10)).not.toContain(1);
-		expect(map.retrieve(-10, -60, 20, 20)).toEqual([1]);
+		expect(map.search(-90, -10, 10, 10)).not.toContain(1);
+		expect(map.search(-10, -60, 20, 20)).toEqual([1]);
 		expect(map.remove(1)).toBe(true);
-		expect(map.retrieve(-10, -60, 20, 20)).toEqual([]);
+		expect(map.search(-10, -60, 20, 20)).toEqual([]);
 	});
 
 	it('appends candidates into a caller-owned result array', () => {
@@ -225,8 +225,35 @@ describe('SharedSpatialMap', () => {
 		map.insert(1, 100, 100, 10, 10);
 		let result = [99];
 
-		expect(map.retrieveInto(result, 90, 90, 30, 30)).toBe(result);
+		expect(map.searchInto(result, 90, 90, 30, 30)).toBe(result);
 		expect(result).toEqual([99, 1]);
+	});
+
+	it('filters search candidates by id', () => {
+		let map = new SharedSpatialMap(memory, { gridSize: 50 });
+		map.insert(1, 100, 100, 10, 10);
+		map.insert(2, 105, 105, 10, 10);
+
+		expect(map.search(90, 90, 40, 40, (id) => id === 2)).toEqual([2]);
+
+		let result = [99];
+		expect(map.searchInto(result, 90, 90, 40, 40, (id) => id === 1)).toBe(result);
+		expect(result).toEqual([99, 1]);
+	});
+
+	it('finds nearest entities in distance order with limits and filtering', () => {
+		let map = new SharedSpatialMap(memory, { gridSize: 50 });
+		map.insert(1, -100, -100, 10, 10);
+		map.insert(2, -70, -100, 10, 10);
+		map.insert(3, 50, -100, 10, 10);
+
+		expect(map.neighbors(-95, -95, 2, 200)).toEqual([1, 2]);
+		expect(map.neighbors(-95, -95, 3, 20)).toEqual([1]);
+		expect(map.neighbors(-95, -95, 2, Infinity, id => id !== 1)).toEqual([2, 3]);
+		expect(map.neighbors(-95, -95, 2, -1)).toEqual([]);
+
+		map.update(1, -55, -100, 10, 10);
+		expect(map.neighbors(-95, -95, 1, 200)).toEqual([2]);
 	});
 
 	it('removes entities and recycles their slots', () => {
@@ -240,7 +267,7 @@ describe('SharedSpatialMap', () => {
 		expect(map.has(2)).toBe(false);
 		expect(map.size).toEqual(2);
 
-		let result = map.retrieve(90, 90, 30, 30);
+		let result = map.search(90, 90, 30, 30);
 		expect(new Set(result)).toEqual(new Set([1, 3]));
 	});
 
@@ -254,7 +281,7 @@ describe('SharedSpatialMap', () => {
 		map.remove(1); // oldest = tail
 		map.remove(3); // middle
 
-		expect(new Set(map.retrieve(499, 499, 4, 4))).toEqual(new Set([2, 4]));
+		expect(new Set(map.search(499, 499, 4, 4))).toEqual(new Set([2, 4]));
 		expect(map.size).toEqual(2);
 	});
 
@@ -264,8 +291,8 @@ describe('SharedSpatialMap', () => {
 		map.insert(2, 40, 40, 5, 5);
 
 		expect(map.remove(1)).toBe(true);
-		expect(map.retrieve(0, 0, 1000, 1000)).toEqual([2]);
-		expect(map.retrieve(140, 140, 5, 5)).not.toContain(1);
+		expect(map.search(0, 0, 1000, 1000)).toEqual([2]);
+		expect(map.search(140, 140, 5, 5)).not.toContain(1);
 		expect(map.size).toEqual(1);
 	});
 
@@ -280,11 +307,11 @@ describe('SharedSpatialMap', () => {
 		}
 		expect(map.size).toEqual(60);
 		for(let rect of rects) {
-			let found = map.retrieve(rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2);
+			let found = map.search(rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2);
 			expect(found).toContain(rect.id);
 		}
 		// Whole-world query returns every id exactly once despite the bucket collisions
-		let all = map.retrieve(-10, -10, 60 * 37 + 40, 60 * 53 + 40);
+		let all = map.search(-10, -10, 60 * 37 + 40, 60 * 53 + 40);
 		expect(all.length).toEqual(new Set(all).size);
 		expect(new Set(all)).toEqual(new Set(rects.map(rect => rect.id)));
 	});
@@ -296,10 +323,10 @@ describe('SharedSpatialMap', () => {
 		}
 		map.clear();
 		expect(map.size).toEqual(0);
-		expect(map.retrieve(0, 0, 1000, 1000)).toEqual([]);
+		expect(map.search(0, 0, 1000, 1000)).toEqual([]);
 
 		map.insert(99, 500, 500, 5, 5);
-		expect(map.retrieve(0, 0, 1000, 1000)).toEqual([99]);
+		expect(map.search(0, 0, 1000, 1000)).toEqual([99]);
 	});
 
 	it('a second instance over the same shared memory sees inserts and updates', () => {
@@ -307,12 +334,12 @@ describe('SharedSpatialMap', () => {
 		let clone = new SharedSpatialMap(memory, main.getSharedMemory());
 
 		main.insert(1, 100, 100, 5, 5);
-		expect(clone.retrieve(90, 90, 30, 30)).toContain(1);
+		expect(clone.search(90, 90, 30, 30)).toContain(1);
 		expect(clone.size).toEqual(1);
 
 		clone.update(1, 900, 900, 5, 5);
-		expect(main.retrieve(880, 880, 40, 40)).toContain(1);
-		expect(main.retrieve(90, 90, 30, 30)).not.toContain(1);
+		expect(main.search(880, 880, 40, 40)).toContain(1);
+		expect(main.search(90, 90, 30, 30)).not.toContain(1);
 
 		clone.insert(2, 500, 500, 5, 5);
 		expect(main.has(2)).toBe(true);
@@ -333,7 +360,7 @@ describe('SharedSpatialMap', () => {
 		expect(map.gridSize).toEqual(50);
 	});
 
-	it('retrieve returns every true overlap (randomized cross-check against brute force)', () => {
+	it('search returns every true overlap (randomized cross-check against brute force)', () => {
 		let map = new SharedSpatialMap(memory, { gridSize: 40, buckets: 256 });
 		let rects: Array<Rect> = [];
 
@@ -369,7 +396,7 @@ describe('SharedSpatialMap', () => {
 				height,
 			};
 
-			let result = map.retrieve(query.x, query.y, query.width, query.height);
+			let result = map.search(query.x, query.y, query.width, query.height);
 			// No duplicates even though entities span multiple cells and cells collide onto buckets
 			expect(result.length).toEqual(new Set(result).size);
 
@@ -400,7 +427,7 @@ describe('SharedSpatialMap', () => {
 
 		for(let q = 0; q < 100; q++) {
 			let query = { x: -500 + random() * 2000, y: -500 + random() * 2000, width: 1 + random() * 100, height: 1 + random() * 100 };
-			let result = map.retrieve(query.x, query.y, query.width, query.height);
+			let result = map.search(query.x, query.y, query.width, query.height);
 			expect(result.length).toEqual(new Set(result).size);
 
 			let found = new Set(result);
@@ -435,7 +462,7 @@ describe('SharedSpatialMap', () => {
 			let map = new SharedSpatialMap(memory, { gridSize: 50, type: Float64Array });
 			let bigId = 2 ** 40 + 7;
 			map.insert(bigId, 100, 100, 10, 10);
-			expect(map.retrieve(90, 90, 30, 30)).toContain(bigId);
+			expect(map.search(90, 90, 30, 30)).toContain(bigId);
 		});
 
 		it('a second instance over the same memory reports the same type', () => {
@@ -444,12 +471,12 @@ describe('SharedSpatialMap', () => {
 			expect(clone.type).toEqual(ARRAY_TYPE.float64);
 		});
 
-		it('still inserts and retrieves with float64 coordinates', () => {
+		it('still inserts and finds with float64 coordinates', () => {
 			let map = new SharedSpatialMap(memory, { gridSize: 50, type: Float64Array });
 			map.insert(1, 100, 100, 10, 10);
 			map.update(1, 900, 900, 10, 10);
-			expect(map.retrieve(880, 880, 40, 40)).toContain(1);
-			expect(map.retrieve(90, 90, 30, 30)).not.toContain(1);
+			expect(map.search(880, 880, 40, 40)).toContain(1);
+			expect(map.search(90, 90, 30, 30)).not.toContain(1);
 		});
 	});
 

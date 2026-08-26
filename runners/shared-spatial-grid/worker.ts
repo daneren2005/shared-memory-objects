@@ -74,7 +74,7 @@ self.onmessage = (e) => {
 		let missing = 0;
 		for(let entity of live) {
 			// A tiny query around the last-known position must return this entity
-			let found = grid.retrieve(entity.x - 1, entity.y - 1, entity.width + 2, entity.height + 2);
+			let found = grid.search(entity.x - 1, entity.y - 1, entity.width + 2, entity.height + 2);
 			if(!found.includes(entity.id)) {
 				missing++;
 			}

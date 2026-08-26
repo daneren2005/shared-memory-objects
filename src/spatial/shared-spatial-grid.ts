@@ -6,6 +6,10 @@ import SharedMap from '../shared-map';
 import { lock, unlock } from '../lock/simple-lock';
 import { getPointer, loadRawPointer, storeRawPointer } from '../utils/pointer';
 import { ARRAY_TYPE, getArrayTypeCode, getByteMultipler, makeArrayView } from '../utils/array-type';
+import {
+	MinPriorityQueue, addCandidate, candidateLimit, distanceSquaredToRect,
+	type NeighborCandidate, type NearestNeighbor,
+} from './spatial-neighbors';
 
 // Uniform fixed-grid spatial index ("spatial hash grid") built for concurrent updates from many threads. Like
 // SharedQuadtree it avoids any runtime reshaping - the cols x rows array of cells is allocated once and never changes
@@ -18,7 +22,7 @@ import { ARRAY_TYPE, getArrayTypeCode, getByteMultipler, makeArrayView } from '.
 // each slot carries the next index). The entity's occupied cell rectangle is stored once in a separate entity pool, keyed
 // by an id->entityIndex SharedMap, so remove(id) (which only gets an id) knows which cells to unlink from.
 //
-// retrieve returns each entity at most once even though it spans multiple cells: every slot carries the entity's anchor
+// search returns each entity at most once even though it spans multiple cells: every slot carries the entity's anchor
 // (top-left) cell, and a slot only emits its id when its cell is the top-left cell of the entity that intersects the query
 // (col == max(anchorCol, qMinCol) && row == max(anchorRow, qMinRow)). That cell is always one of the entity's cells and
 // inside the query, so exactly one slot emits - no Set and no per-query mutation, so concurrent queries stay safe.
@@ -56,7 +60,11 @@ const ENTITY_MIN_COL = 0;
 const ENTITY_MIN_ROW = 1;
 const ENTITY_MAX_COL = 2;
 const ENTITY_MAX_ROW = 3;
-const ENTITY_FIELDS = 4;
+const ENTITY_X = 4;
+const ENTITY_Y = 5;
+const ENTITY_WIDTH = 6;
+const ENTITY_HEIGHT = 7;
+const ENTITY_FIELDS = 8;
 
 // Largest exact integer range for Float32 coordinates: [0, 2^24). Ids and pool indices must stay under this to survive a
 // Float32 round-trip, so it doubles as the Float32 entity cap and the value just past every valid index.
@@ -85,7 +93,7 @@ export default class SharedSpatialGrid {
 	private idMap: SharedMap<number>;
 
 	// Reused to hand a full record to pool.push without allocating a fresh array per operation (single writer per id)
-	private entityScratch: Array<number> = [0, 0, 0, 0];
+	private entityScratch: Array<number> = [0, 0, 0, 0, 0, 0, 0, 0];
 	private slotScratch: Array<number> = [0, 0, 0, 0];
 
 	// Cell block views over one contiguous region: Int32 for the per-cell locks, Uint32 for the head indexes.
@@ -251,6 +259,10 @@ export default class SharedSpatialGrid {
 		entity[ENTITY_MIN_ROW] = minRow;
 		entity[ENTITY_MAX_COL] = maxCol;
 		entity[ENTITY_MAX_ROW] = maxRow;
+		entity[ENTITY_X] = x;
+		entity[ENTITY_Y] = y;
+		entity[ENTITY_WIDTH] = width;
+		entity[ENTITY_HEIGHT] = height;
 		let entityIndex = this.entityPool.push(entity);
 		this.idMap.set(id, entityIndex);
 
@@ -278,9 +290,12 @@ export default class SharedSpatialGrid {
 		let maxCol = this.colOf(x + width);
 		let maxRow = this.rowOf(y + height);
 
-		// Same cell rectangle: membership is unchanged (query results depend only on which cells the entity occupies, not on
-		// its exact coordinates), so there is nothing to relink.
+		// Same cell rectangle: membership is unchanged, but neighbors still needs the new exact rectangle.
 		if(minCol === oldMinCol && minRow === oldMinRow && maxCol === oldMaxCol && maxRow === oldMaxRow) {
+			block[off + ENTITY_X] = x;
+			block[off + ENTITY_Y] = y;
+			block[off + ENTITY_WIDTH] = width;
+			block[off + ENTITY_HEIGHT] = height;
 			return;
 		}
 
@@ -290,6 +305,10 @@ export default class SharedSpatialGrid {
 		block[off + ENTITY_MIN_ROW] = minRow;
 		block[off + ENTITY_MAX_COL] = maxCol;
 		block[off + ENTITY_MAX_ROW] = maxRow;
+		block[off + ENTITY_X] = x;
+		block[off + ENTITY_Y] = y;
+		block[off + ENTITY_WIDTH] = width;
+		block[off + ENTITY_HEIGHT] = height;
 	}
 
 	remove(id: number): boolean {
@@ -313,13 +332,14 @@ export default class SharedSpatialGrid {
 
 	// Broad-phase query: ids of every entity occupying a cell that overlaps the query rect. Each entity is returned at most
 	// once (see the anchor-cell dedup in collectCell); the caller does the narrow-phase overlap check.
-	retrieve(x: number, y: number, width: number, height: number): Array<number> {
+	search(x: number, y: number, width: number, height: number, filter?: (id: number) => boolean): Array<number> {
 		let out: Array<number> = [];
-		this.retrieveInto(out, x, y, width, height);
+		this.searchInto(out, x, y, width, height, filter);
 		return out;
 	}
-	// Same as retrieve but appends into a caller-owned array so hot loops can reuse it. Returns the array.
-	retrieveInto(out: Array<number>, x: number, y: number, width: number, height: number): Array<number> {
+	// Same as search but appends into a caller-owned array so hot loops can reuse it. Returns the array.
+	searchInto(out: Array<number>, x: number, y: number, width: number, height: number, filter?: (id: number) => boolean): Array<number> {
+		let start = out.length;
 		let qMinCol = this.colOf(x);
 		let qMinRow = this.rowOf(y);
 		let qMaxCol = this.colOf(x + width);
@@ -340,7 +360,170 @@ export default class SharedSpatialGrid {
 				this.collectCell(out, cell, col, row, qMinCol, qMinRow);
 			}
 		}
+		if(filter !== undefined) {
+			let write = start;
+			for(let read = start; read < out.length; read++) {
+				let id = out[read];
+				if(filter(id)) {
+					out[write++] = id;
+				}
+			}
+			out.length = write;
+		}
 		return out;
+	}
+
+	neighbors(x: number, y: number, maxResults: number, maxDistance: number, filter?: (id: number) => boolean): Array<number> {
+		if(maxResults <= 0 || maxDistance < 0 || Number.isNaN(maxResults) || Number.isNaN(maxDistance)) {
+			return [];
+		}
+
+		maxResults = Math.floor(maxResults);
+		if(maxResults === 0) {
+			return [];
+		}
+		let maxDistanceSquared = maxDistance * maxDistance;
+		if(maxResults > 1) {
+			return this.neighborsBestFirst(x, y, maxResults, maxDistanceSquared, filter);
+		}
+		let cellIds: Array<number> = [];
+		let startCol = this.colOf(x);
+		let startRow = this.rowOf(y);
+		let nearest: NearestNeighbor = { id: undefined, distance: maxDistanceSquared };
+		let visit = (col: number, row: number) => {
+			let cell = row * this.cols + col;
+			if(filter === undefined) {
+				this.collectNearestCell(nearest, cell, x, y);
+				return;
+			}
+			cellIds.length = 0;
+			this.collectNeighborCell(cellIds, cell);
+			for(let id of cellIds) {
+				if(!filter(id)) {
+					continue;
+				}
+				let entityIndex = this.idMap.get(id);
+				if(entityIndex !== undefined) {
+					let entity = this.entityPool.blockFor(entityIndex);
+					let entityOffset = this.entityPool.blockOffset(entityIndex);
+					let minX = entity[entityOffset + ENTITY_X];
+					let minY = entity[entityOffset + ENTITY_Y];
+					let distance = distanceSquaredToRect(
+						x, y, minX, minY,
+						minX + entity[entityOffset + ENTITY_WIDTH], minY + entity[entityOffset + ENTITY_HEIGHT],
+					);
+					if(distance < nearest.distance || (distance === nearest.distance && (nearest.id === undefined || id < nearest.id))) {
+						nearest.id = id;
+						nearest.distance = distance;
+					}
+				}
+			}
+		};
+
+		let maxRadius = Math.max(startCol, this.cols - 1 - startCol, startRow, this.rows - 1 - startRow);
+		for(let radius = 0; radius <= maxRadius; radius++) {
+			if(this.gridRingDistanceSquared(x, y, startCol, startRow, radius) > nearest.distance) {
+				break;
+			}
+			if(radius === 0) {
+				visit(startCol, startRow);
+				continue;
+			}
+			let minCol = Math.max(0, startCol - radius);
+			let maxCol = Math.min(this.cols - 1, startCol + radius);
+			let top = startRow - radius;
+			let bottom = startRow + radius;
+			if(top >= 0) {
+				for(let col = minCol; col <= maxCol; col++) {
+					visit(col, top);
+				}
+			}
+			if(bottom < this.rows) {
+				for(let col = minCol; col <= maxCol; col++) {
+					visit(col, bottom);
+				}
+			}
+			let minRow = Math.max(0, startRow - radius + 1);
+			let maxRow = Math.min(this.rows - 1, startRow + radius - 1);
+			let left = startCol - radius;
+			let right = startCol + radius;
+			if(left >= 0) {
+				for(let row = minRow; row <= maxRow; row++) {
+					visit(left, row);
+				}
+			}
+			if(right < this.cols) {
+				for(let row = minRow; row <= maxRow; row++) {
+					visit(right, row);
+				}
+			}
+		}
+
+		return nearest.id === undefined ? [] : [nearest.id];
+	}
+
+	private neighborsBestFirst(
+		x: number, y: number, maxResults: number, maxDistanceSquared: number,
+		filter: ((id: number) => boolean) | undefined,
+	): Array<number> {
+		let candidates: Array<NeighborCandidate> = [];
+		let cellIds: Array<number> = [];
+		let seenEntities = new Set<number>();
+		let seenCells = new Uint8Array(this.cellCount);
+		let queue = new MinPriorityQueue<number>();
+		let enqueue = (col: number, row: number) => {
+			if(col < 0 || col >= this.cols || row < 0 || row >= this.rows) {
+				return;
+			}
+			let cell = row * this.cols + col;
+			if(seenCells[cell] !== 0) {
+				return;
+			}
+			seenCells[cell] = 1;
+			let minX = this.originX + col * this.cellSize;
+			let minY = this.originY + row * this.cellSize;
+			queue.push(cell, distanceSquaredToRect(x, y, minX, minY, minX + this.cellSize, minY + this.cellSize));
+		};
+		enqueue(this.colOf(x), this.rowOf(y));
+		while(queue.length > 0 && queue.priority <= candidateLimit(candidates, maxResults, maxDistanceSquared)) {
+			let cell = queue.pop();
+			if(cell === undefined) {
+				break;
+			}
+			cellIds.length = 0;
+			this.collectNeighborCell(cellIds, cell);
+			for(let id of cellIds) {
+				if(seenEntities.has(id)) {
+					continue;
+				}
+				seenEntities.add(id);
+				if(filter !== undefined && !filter(id)) {
+					continue;
+				}
+				let entityIndex = this.idMap.get(id);
+				if(entityIndex === undefined) {
+					continue;
+				}
+				let entity = this.entityPool.blockFor(entityIndex);
+				let entityOffset = this.entityPool.blockOffset(entityIndex);
+				let minX = entity[entityOffset + ENTITY_X];
+				let minY = entity[entityOffset + ENTITY_Y];
+				let distance = distanceSquaredToRect(
+					x, y, minX, minY,
+					minX + entity[entityOffset + ENTITY_WIDTH], minY + entity[entityOffset + ENTITY_HEIGHT],
+				);
+				if(distance <= maxDistanceSquared) {
+					addCandidate(candidates, id, distance, maxResults);
+				}
+			}
+			let col = cell % this.cols;
+			let row = Math.floor(cell / this.cols);
+			enqueue(col - 1, row);
+			enqueue(col + 1, row);
+			enqueue(col, row - 1);
+			enqueue(col, row + 1);
+		}
+		return candidates.map(candidate => candidate.id);
 	}
 
 	clear() {
@@ -390,6 +573,52 @@ export default class SharedSpatialGrid {
 	private rowOf(y: number): number {
 		let row = Math.floor((y - this.originY) / this.cellSize);
 		return row < 0 ? 0 : row >= this.rows ? this.rows - 1 : row;
+	}
+
+	private gridRingDistanceSquared(x: number, y: number, centerCol: number, centerRow: number, radius: number): number {
+		if(radius === 0) {
+			let minX = this.originX + centerCol * this.cellSize;
+			let minY = this.originY + centerRow * this.cellSize;
+			return distanceSquaredToRect(x, y, minX, minY, minX + this.cellSize, minY + this.cellSize);
+		}
+
+		let minDistance = Infinity;
+		let minCol = Math.max(0, centerCol - radius);
+		let maxCol = Math.min(this.cols - 1, centerCol + radius);
+		let minRow = Math.max(0, centerRow - radius);
+		let maxRow = Math.min(this.rows - 1, centerRow + radius);
+		let left = centerCol - radius;
+		let right = centerCol + radius;
+		let top = centerRow - radius;
+		let bottom = centerRow + radius;
+		let cellSize = this.cellSize;
+		let originX = this.originX;
+		let originY = this.originY;
+		if(top >= 0) {
+			minDistance = distanceSquaredToRect(
+				x, y, originX + minCol * cellSize, originY + top * cellSize,
+				originX + (maxCol + 1) * cellSize, originY + (top + 1) * cellSize,
+			);
+		}
+		if(bottom < this.rows) {
+			minDistance = Math.min(minDistance, distanceSquaredToRect(
+				x, y, originX + minCol * cellSize, originY + bottom * cellSize,
+				originX + (maxCol + 1) * cellSize, originY + (bottom + 1) * cellSize,
+			));
+		}
+		if(left >= 0) {
+			minDistance = Math.min(minDistance, distanceSquaredToRect(
+				x, y, originX + left * cellSize, originY + minRow * cellSize,
+				originX + (left + 1) * cellSize, originY + (maxRow + 1) * cellSize,
+			));
+		}
+		if(right < this.cols) {
+			minDistance = Math.min(minDistance, distanceSquaredToRect(
+				x, y, originX + right * cellSize, originY + minRow * cellSize,
+				originX + (right + 1) * cellSize, originY + (maxRow + 1) * cellSize,
+			));
+		}
+		return minDistance;
 	}
 
 	// Push one slot into each cell of the rectangle, carrying the entity's top-left cell as the dedup anchor. Every slot
@@ -536,6 +765,56 @@ export default class SharedSpatialGrid {
 			index = block[off + SLOT_NEXT];
 		}
 		unlock(cellInts, lockIndex);
+	}
+
+	private collectNeighborCell(out: Array<number>, cell: number) {
+		let headIndex = cell * CELL_SIZE + CELL_HEAD_OFFSET;
+		if(this.cellHeads[headIndex] === this.nullIndex) {
+			return;
+		}
+		let lockIndex = cell * CELL_SIZE + CELL_LOCK_OFFSET;
+		lock(this.cellInts, lockIndex);
+		let index = this.cellHeads[headIndex];
+		while(index !== this.nullIndex) {
+			let block = this.slotPool.blockFor(index);
+			let off = this.slotPool.blockOffset(index);
+			out.push(block[off + SLOT_ID]);
+			index = block[off + SLOT_NEXT];
+		}
+		unlock(this.cellInts, lockIndex);
+	}
+
+	private collectNearestCell(nearest: NearestNeighbor, cell: number, x: number, y: number) {
+		let headIndex = cell * CELL_SIZE + CELL_HEAD_OFFSET;
+		if(this.cellHeads[headIndex] === this.nullIndex) {
+			return;
+		}
+		let lockIndex = cell * CELL_SIZE + CELL_LOCK_OFFSET;
+		lock(this.cellInts, lockIndex);
+		let index = this.cellHeads[headIndex];
+		while(index !== this.nullIndex) {
+			let slot = this.slotPool.blockFor(index);
+			let slotOffset = this.slotPool.blockOffset(index);
+			let id = slot[slotOffset + SLOT_ID];
+			let entityIndex = this.idMap.get(id);
+			if(entityIndex !== undefined) {
+				let entity = this.entityPool.blockFor(entityIndex);
+				let entityOffset = this.entityPool.blockOffset(entityIndex);
+				let minX = entity[entityOffset + ENTITY_X];
+				let minY = entity[entityOffset + ENTITY_Y];
+				let distance = distanceSquaredToRect(
+					x, y, minX, minY,
+					minX + entity[entityOffset + ENTITY_WIDTH], minY + entity[entityOffset + ENTITY_HEIGHT],
+				);
+				if(distance < nearest.distance
+					|| (distance === nearest.distance && (nearest.id === undefined || id < nearest.id))) {
+					nearest.id = id;
+					nearest.distance = distance;
+				}
+			}
+			index = slot[slotOffset + SLOT_NEXT];
+		}
+		unlock(this.cellInts, lockIndex);
 	}
 
 	// Splice this entity's slot out of the cell's bucket and return its index (nullIndex if the cell held no slot for it).
