@@ -1,15 +1,15 @@
 import { bench, describe } from 'vitest';
 import { Quadtree as QuadtreeTs, Rectangle } from '@timohausmann/quadtree-ts';
+import Flatbush from 'flatbush';
 import MemoryHeap from '../../memory-heap';
 import SharedQuadtree from '../shared-quadtree';
 import SharedSpatialGrid from '../shared-spatial-grid';
 import SharedSpatialMap from '../shared-spatial-map';
 
 // SharedQuadtree, SharedSpatialGrid, and SharedSpatialMap are fixed-shape structures meant for live multi-thread updates;
-// quadtree-ts is a single-thread quadtree with an in-place update. SharedSpatialMap is the grid's unbounded cousin: it
+// quadtree-ts supports single-threaded updates, while Flatbush is static. SharedSpatialMap is the grid's unbounded cousin: it
 // hashes cells into a fixed bucket array instead of a fixed cols x rows extent, so it pays a hash + chain filter per cell
-// in exchange for supporting a world of any size. The comparison covers the four things a game loop actually does: build
-// the index, run broad-phase queries against it, rebuild it when everything moved, and move entities in place.
+// in exchange for supporting a world of any size. The comparison covers building, broad-phase queries, and moving entities.
 
 const WORLD = { x: 0, y: 0, width: 4000, height: 4000 };
 const MAX_LEVELS = 6;
@@ -18,6 +18,7 @@ const MAX_LEVELS = 6;
 const GRID_SIZE = WORLD.width / Math.pow(2, MAX_LEVELS);
 const ENTITY_COUNT = 2_000;
 const QUERY_COUNT = 2_000;
+const MOVED_ENTITY_COUNT = ENTITY_COUNT * 0.2;
 
 interface Entity {
 	id: number
@@ -92,6 +93,16 @@ function buildSpatialMap(): SharedSpatialMap {
 	}
 	return map;
 }
+function buildFlatbush(movedEntityCount = 0): Flatbush {
+	let index = new Flatbush(ENTITY_COUNT);
+	for(let i = 0; i < entities.length; i++) {
+		let entity = entities[i];
+		let offset = i < movedEntityCount ? 3 : 0;
+		index.add(entity.x + offset, entity.y + offset, entity.x + entity.width + offset, entity.y + entity.height + offset);
+	}
+	index.finish();
+	return index;
+}
 
 describe(`build a tree of ${ENTITY_COUNT} entities`, () => {
 	bench('shared quadtree', () => {
@@ -105,6 +116,9 @@ describe(`build a tree of ${ENTITY_COUNT} entities`, () => {
 	});
 	bench('quadtree-ts', () => {
 		buildQuadtreeTs();
+	});
+	bench('flatbush', () => {
+		buildFlatbush();
 	});
 });
 
@@ -156,10 +170,61 @@ describe(`${QUERY_COUNT} broad-phase queries`, () => {
 			tsTree = buildQuadtreeTs();
 		},
 	});
+
+	let flatbush: Flatbush;
+	bench('flatbush', () => {
+		for(let query of queries) {
+			flatbush.search(query.x, query.y, query.x + query.width, query.y + query.height);
+		}
+	}, {
+		setup: () => {
+			flatbush = buildFlatbush();
+		},
+	});
 });
 
-// Moving every entity one step. SharedQuadtree updates in place (its whole point); quadtree-js has no update, so the
-// equivalent is a full clear + reinsert - shown side by side to make that cost explicit.
+describe(`move ${MOVED_ENTITY_COUNT} of ${ENTITY_COUNT} entities one step`, () => {
+	let sharedTree: SharedQuadtree;
+	bench('shared quadtree', () => {
+		for(let i = 0; i < MOVED_ENTITY_COUNT; i++) {
+			let entity = entities[i];
+			sharedTree.update(entity.id, entity.x + 3, entity.y + 3, entity.width, entity.height);
+		}
+	}, {
+		setup: () => {
+			sharedTree = buildShared();
+		},
+	});
+
+	let grid: SharedSpatialGrid;
+	bench('shared grid', () => {
+		for(let i = 0; i < MOVED_ENTITY_COUNT; i++) {
+			let entity = entities[i];
+			grid.update(entity.id, entity.x + 3, entity.y + 3, entity.width, entity.height);
+		}
+	}, {
+		setup: () => {
+			grid = buildGrid();
+		},
+	});
+
+	let spatialMap: SharedSpatialMap;
+	bench('shared spatial map', () => {
+		for(let i = 0; i < MOVED_ENTITY_COUNT; i++) {
+			let entity = entities[i];
+			spatialMap.update(entity.id, entity.x + 3, entity.y + 3, entity.width, entity.height);
+		}
+	}, {
+		setup: () => {
+			spatialMap = buildSpatialMap();
+		},
+	});
+
+	bench('flatbush (rebuild)', () => {
+		buildFlatbush(MOVED_ENTITY_COUNT);
+	});
+});
+
 describe(`move all ${ENTITY_COUNT} entities one step`, () => {
 	let sharedTree: SharedQuadtree;
 	bench('shared quadtree', () => {

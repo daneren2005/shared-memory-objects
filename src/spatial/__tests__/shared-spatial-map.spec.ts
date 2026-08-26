@@ -109,11 +109,124 @@ describe('SharedSpatialMap', () => {
 		expect(map.size).toEqual(1);
 	});
 
+	// Regression for the overlap-cell relink bug: update() used to link the new cells then unlink the old ones. In a cell
+	// belonging to BOTH rectangles the new slot went to the bucket head and the unlink removed the first id+cell match - the
+	// just-added slot - leaving the stale one behind carrying the old anchor. Which way that broke depended on where the
+	// overlap sat relative to the moved anchor: a duplicate id, or a lost one.
+	describe('moving across overlapping cells keeps exactly one slot per cell', () => {
+		it('does not duplicate when the overlap is a non-anchor cell and the anchor moves', () => {
+			let map = new SharedSpatialMap(memory, { gridSize: 50 });
+			map.insert(1, 95, 5, 20, 0); // cols 1..2, row 0 -> anchor cell (1,0)
+			map.update(1, 45, 5, 20, 0); // cols 0..1, row 0 -> overlap is col 1 (non-anchor), anchor moves to (0,0)
+
+			let all = map.retrieve(0, 0, 1000, 1000);
+			expect(all.filter(id => id === 1).length).toEqual(1);
+			expect(new Set(all)).toEqual(new Set([1]));
+			expect(map.size).toEqual(1);
+		});
+
+		it('does not lose the entity when its new anchor cell is itself an overlap cell', () => {
+			let map = new SharedSpatialMap(memory, { gridSize: 50 });
+			map.insert(1, 45, 5, 20, 0); // cols 0..1, row 0 -> anchor cell (0,0)
+			map.update(1, 95, 5, 20, 0); // cols 1..2, row 0 -> new anchor cell (1,0) is in the overlap
+
+			let all = map.retrieve(0, 0, 1000, 1000);
+			expect(all.filter(id => id === 1).length).toEqual(1);
+			expect(new Set(all)).toEqual(new Set([1]));
+			expect(map.size).toEqual(1);
+		});
+
+		it('keeps a 2D straddling entity to a single slot across a diagonal overlap move', () => {
+			let map = new SharedSpatialMap(memory, { gridSize: 50 });
+			map.insert(1, 95, 95, 20, 20); // cols 1..2, rows 1..2
+			map.update(1, 45, 45, 20, 20); // cols 0..1, rows 0..1 -> overlap is the single cell (1,1)
+
+			let all = map.retrieve(0, 0, 1000, 1000);
+			expect(all.filter(id => id === 1).length).toEqual(1);
+			expect(map.size).toEqual(1);
+			expect(map.retrieve(45, 45, 5, 5)).toContain(1); // still at the new spot
+			expect(map.retrieve(110, 110, 4, 4)).not.toContain(1); // gone from the old-only corner
+		});
+
+		it('keeps a single slot even when the two overlap cells collide onto one bucket', () => {
+			// A single bucket forces every cell of both rectangles to share one chain, so the relink can only be correct if it
+			// matches slots by cell (col, row), not just id.
+			let map = new SharedSpatialMap(memory, { gridSize: 50, buckets: 1 });
+			map.insert(1, 95, 5, 20, 0);
+			map.update(1, 45, 5, 20, 0);
+			expect(map.retrieve(0, 0, 1000, 1000)).toEqual([1]);
+			map.update(1, 95, 5, 20, 0);
+			expect(map.retrieve(0, 0, 1000, 1000)).toEqual([1]);
+			expect(map.size).toEqual(1);
+		});
+
+		it('stays consistent through many small overlapping moves', () => {
+			let map = new SharedSpatialMap(memory, { gridSize: 50 });
+			map.insert(1, 100, 100, 20, 20);
+			// Deterministic walk kept inside a small cluster of cells so successive rectangles keep overlapping
+			let seed = 12345;
+			let rand = () => {
+				seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+				return seed / 0x7fffffff;
+			};
+			for(let i = 0; i < 500; i++) {
+				map.update(1, 40 + rand() * 60, 40 + rand() * 60, 20, 20);
+				let all = map.retrieve(0, 0, 1000, 1000);
+				expect(all).toEqual([1]);
+			}
+			expect(map.size).toEqual(1);
+		});
+	});
+
 	it('update on an unknown id inserts it', () => {
 		let map = new SharedSpatialMap(memory, { gridSize: 50 });
 		map.update(7, 300, 300, 5, 5);
 		expect(map.has(7)).toBe(true);
 		expect(map.retrieve(290, 290, 30, 30)).toContain(7);
+	});
+
+	it('treats inserting an existing id as an update without leaving stale slots', () => {
+		let map = new SharedSpatialMap(memory, { gridSize: 50 });
+		map.insert(1, 40, 40, 120, 120);
+		map.insert(1, 900, 900, 10, 10);
+
+		expect(map.size).toEqual(1);
+		expect(map.retrieve(100, 100, 10, 10)).not.toContain(1);
+		expect(map.retrieve(890, 890, 30, 30)).toEqual([1]);
+	});
+
+	it('keeps only live ids through moves, removals, inserts, and reinserts', () => {
+		let map = new SharedSpatialMap(memory, { gridSize: 50 });
+		map.insert(1, 100, 100, 10, 10);
+		map.insert(2, 800, 100, 10, 10);
+		map.update(1, 790, 790, 20, 20);
+		map.remove(2);
+		map.update(3, 100, 800, 10, 10);
+		map.insert(1, 100, 100, 10, 10);
+
+		expect(new Set(map.retrieve(0, 0, 1000, 1000))).toEqual(new Set([1, 3]));
+		expect(map.retrieve(90, 90, 30, 30)).toContain(1);
+		expect(map.retrieve(780, 780, 40, 40)).not.toContain(1);
+	});
+
+	it('updates across negative cell boundaries even when cells share a bucket', () => {
+		let map = new SharedSpatialMap(memory, { gridSize: 50, buckets: 1 });
+		map.insert(1, -51, -1, 2, 2);
+		map.update(1, -1, -51, 2, 2);
+
+		expect(map.retrieve(-90, -10, 10, 10)).not.toContain(1);
+		expect(map.retrieve(-10, -60, 20, 20)).toEqual([1]);
+		expect(map.remove(1)).toBe(true);
+		expect(map.retrieve(-10, -60, 20, 20)).toEqual([]);
+	});
+
+	it('appends candidates into a caller-owned result array', () => {
+		let map = new SharedSpatialMap(memory, { gridSize: 50 });
+		map.insert(1, 100, 100, 10, 10);
+		let result = [99];
+
+		expect(map.retrieveInto(result, 90, 90, 30, 30)).toBe(result);
+		expect(result).toEqual([99, 1]);
 	});
 
 	it('removes entities and recycles their slots', () => {

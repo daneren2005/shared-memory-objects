@@ -224,6 +224,11 @@ export default class SharedSpatialMap {
 	}
 
 	insert(id: number, x: number, y: number, width = 0, height = 0) {
+		if(this.idMap.get(id) !== undefined) {
+			this.update(id, x, y, width, height);
+			return;
+		}
+
 		let minCol = this.colOf(x);
 		let minRow = this.rowOf(y);
 		let maxCol = this.colOf(x + width);
@@ -267,10 +272,7 @@ export default class SharedSpatialMap {
 			return;
 		}
 
-		// Link the new cells before unlinking the old ones so a query racing the move sees the entity in its old or new
-		// cells (or briefly both), never neither. The anchor is refreshed on the new slots.
-		this.linkRange(id, minCol, minRow, maxCol, maxRow);
-		this.unlinkRange(id, oldMinCol, oldMinRow, oldMaxCol, oldMaxRow);
+		this.relinkRange(id, minCol, minRow, maxCol, maxRow, oldMinCol, oldMinRow, oldMaxCol, oldMaxRow);
 
 		block[off + ENTITY_MIN_COL] = minCol;
 		block[off + ENTITY_MIN_ROW] = minRow;
@@ -389,23 +391,95 @@ export default class SharedSpatialMap {
 		slot[SLOT_ANCHOR_ROW] = minRow;
 		slot[SLOT_NEXT] = this.nullIndex;
 
+		for(let row = minRow; row <= maxRow; row++) {
+			for(let col = minCol; col <= maxCol; col++) {
+				this.linkIntoBucket(col, row, slot);
+			}
+		}
+	}
+
+	// Push a fresh slot for cell (col, row) - carrying the shared record in slot plus that cell's own coords - onto the
+	// head of its bucket.
+	private linkIntoBucket(col: number, row: number, slot: Array<number>) {
+		slot[SLOT_COL] = col;
+		slot[SLOT_ROW] = row;
 		let pool = this.slotPool;
 		let bucketInts = this.bucketInts;
 		let bucketHeads = this.bucketHeads;
+		let slotIndex = pool.push(slot);
+		let bucket = this.bucketOf(col, row);
+		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
+		lock(bucketInts, lockIndex);
+		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
+		pool.set(slotIndex, SLOT_NEXT, bucketHeads[headIndex]);
+		bucketHeads[headIndex] = slotIndex;
+		unlock(bucketInts, lockIndex);
+	}
+
+	// Move an entity's slots from its old cell rectangle to a new one, touching only the cells that actually change. A cell
+	// in both rectangles keeps its slot and just gets its anchor refreshed; new-only cells are linked before old-only cells
+	// are unlinked, so a query racing the move never sees the entity in neither rectangle. Doing it this way (rather than
+	// linkRange(new) + unlinkRange(old)) is what keeps overlap cells correct: unlinkFromBucket matches by id + cell and
+	// would splice out the freshly linked slot in an overlap cell, leaving the stale one behind and corrupting the anchor.
+	private relinkRange(id: number, minCol: number, minRow: number, maxCol: number, maxRow: number, oldMinCol: number, oldMinRow: number, oldMaxCol: number, oldMaxRow: number) {
+		let ovMinCol = minCol > oldMinCol ? minCol : oldMinCol;
+		let ovMaxCol = maxCol < oldMaxCol ? maxCol : oldMaxCol;
+		let ovMinRow = minRow > oldMinRow ? minRow : oldMinRow;
+		let ovMaxRow = maxRow < oldMaxRow ? maxRow : oldMaxRow;
+		let hasOverlap = ovMinCol <= ovMaxCol && ovMinRow <= ovMaxRow;
+
+		let slot = this.slotScratch;
+		slot[SLOT_ID] = id;
+		slot[SLOT_ANCHOR_COL] = minCol;
+		slot[SLOT_ANCHOR_ROW] = minRow;
+		slot[SLOT_NEXT] = this.nullIndex;
+
 		for(let row = minRow; row <= maxRow; row++) {
+			let inOverlapRow = hasOverlap && row >= ovMinRow && row <= ovMaxRow;
 			for(let col = minCol; col <= maxCol; col++) {
-				slot[SLOT_COL] = col;
-				slot[SLOT_ROW] = row;
-				let slotIndex = pool.push(slot);
-				let bucket = this.bucketOf(col, row);
-				let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
-				lock(bucketInts, lockIndex);
-				let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
-				pool.set(slotIndex, SLOT_NEXT, bucketHeads[headIndex]);
-				bucketHeads[headIndex] = slotIndex;
-				unlock(bucketInts, lockIndex);
+				if(inOverlapRow && col >= ovMinCol && col <= ovMaxCol) {
+					this.refreshAnchorInBucket(this.bucketOf(col, row), id, col, row, minCol, minRow);
+				} else {
+					this.linkIntoBucket(col, row, slot);
+				}
 			}
 		}
+
+		let nullIndex = this.nullIndex;
+		let pool = this.slotPool;
+		for(let row = oldMinRow; row <= oldMaxRow; row++) {
+			let inOverlapRow = hasOverlap && row >= ovMinRow && row <= ovMaxRow;
+			for(let col = oldMinCol; col <= oldMaxCol; col++) {
+				if(inOverlapRow && col >= ovMinCol && col <= ovMaxCol) {
+					continue;
+				}
+				let slotIndex = this.unlinkFromBucket(this.bucketOf(col, row), id, col, row);
+				if(slotIndex !== nullIndex) {
+					pool.deleteIndex(slotIndex);
+				}
+			}
+		}
+	}
+
+	// Refresh the anchor on this entity's slot already linked for cell (col, row) (single writer per id, so it is present).
+	private refreshAnchorInBucket(bucket: number, id: number, col: number, row: number, anchorCol: number, anchorRow: number) {
+		let nullIndex = this.nullIndex;
+		let bucketInts = this.bucketInts;
+		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
+		lock(bucketInts, lockIndex);
+		let pool = this.slotPool;
+		let index = this.bucketHeads[bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET];
+		while(index !== nullIndex) {
+			let block = pool.blockFor(index);
+			let off = pool.blockOffset(index);
+			if(block[off + SLOT_ID] === id && block[off + SLOT_COL] === col && block[off + SLOT_ROW] === row) {
+				block[off + SLOT_ANCHOR_COL] = anchorCol;
+				block[off + SLOT_ANCHOR_ROW] = anchorRow;
+				break;
+			}
+			index = block[off + SLOT_NEXT];
+		}
+		unlock(bucketInts, lockIndex);
 	}
 
 	// Remove and recycle this entity's slot from each cell of the rectangle.

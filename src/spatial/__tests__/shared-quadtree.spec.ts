@@ -85,6 +85,47 @@ describe('SharedQuadtree', () => {
 		expect(tree.retrieve(290, 290, 30, 30)).toContain(7);
 	});
 
+	it('treats inserting an existing id as an update without leaving a stale entry', () => {
+		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
+		tree.insert(1, 100, 100, 10, 10);
+		tree.insert(1, 900, 900, 10, 10);
+
+		expect(tree.size).toEqual(1);
+		expect(tree.retrieve(90, 90, 30, 30)).not.toContain(1);
+		expect(tree.retrieve(890, 890, 30, 30)).toEqual([1]);
+	});
+
+	it('keeps only live ids through moves, removals, inserts, and reinserts', () => {
+		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
+		tree.insert(1, 100, 100, 10, 10);
+		tree.insert(2, 800, 100, 10, 10);
+		tree.update(1, 790, 790, 20, 20);
+		tree.remove(2);
+		tree.update(3, 100, 800, 10, 10);
+		tree.insert(1, 100, 100, 10, 10);
+
+		expect(new Set(tree.retrieve(0, 0, 1000, 1000))).toEqual(new Set([1, 3]));
+		expect(tree.retrieve(90, 90, 30, 30)).toContain(1);
+		expect(tree.retrieve(780, 780, 40, 40)).not.toContain(1);
+	});
+
+	it('uses the deterministic child at a quadrant midline', () => {
+		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
+		tree.insert(1, 500, 500, 0, 0);
+
+		expect(tree.retrieve(500, 500, 1, 1)).toContain(1);
+		expect(tree.retrieve(499, 499, 1, 1)).not.toContain(1);
+	});
+
+	it('appends candidates into a caller-owned result array', () => {
+		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
+		tree.insert(1, 100, 100, 10, 10);
+		let result = [99];
+
+		expect(tree.retrieveInto(result, 90, 90, 30, 30)).toBe(result);
+		expect(result).toEqual([99, 1]);
+	});
+
 	it('removes entities and recycles their slots', () => {
 		let tree = new SharedQuadtree(memory, { bounds: BOUNDS, maxLevels: 5 });
 		tree.insert(1, 100, 100, 5, 5);

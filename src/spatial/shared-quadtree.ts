@@ -198,6 +198,11 @@ export default class SharedQuadtree {
 	}
 
 	insert(id: number, x: number, y: number, width = 0, height = 0) {
+		if(this.idMap.get(id) !== undefined) {
+			this.update(id, x, y, width, height);
+			return;
+		}
+
 		let node = this.locate(x, y, width, height);
 		let record = this.insertScratch;
 		record[ITEM_ID] = id;
@@ -335,9 +340,9 @@ export default class SharedQuadtree {
 		for(let level = 0; level < this.maxLevels; level++) {
 			let midX = nx + nw / 2;
 			let midY = ny + nh / 2;
-			let west = x >= nx && x + width <= midX;
+			let west = x >= nx && x + width <= midX && (width > 0 || x < midX);
 			let east = x >= midX && x + width <= nx + nw;
-			let north = y >= ny && y + height <= midY;
+			let north = y >= ny && y + height <= midY && (height > 0 || y < midY);
 			let south = y >= midY && y + height <= ny + nh;
 
 			if(north && west) {
