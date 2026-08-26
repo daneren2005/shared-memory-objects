@@ -254,6 +254,10 @@ describe('SharedSpatialMap', () => {
 
 		map.update(1, -55, -100, 10, 10);
 		expect(map.neighbors(-95, -95, 1, 200)).toEqual([2]);
+
+		map.remove(2);
+		map.insert(4, -80, -100, 10, 10);
+		expect(map.neighbors(-95, -95, 2, 200)).toEqual([4, 1]);
 	});
 
 	it('removes entities and recycles their slots', () => {

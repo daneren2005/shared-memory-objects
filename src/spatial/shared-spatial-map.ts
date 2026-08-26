@@ -58,7 +58,8 @@ const SLOT_ROW = 2;
 const SLOT_ANCHOR_COL = 3;
 const SLOT_ANCHOR_ROW = 4;
 const SLOT_NEXT = 5;
-const SLOT_FIELDS = 6;
+const SLOT_ENTITY_INDEX = 6;
+const SLOT_FIELDS = 7;
 
 // Entity record fields: the occupied cell rectangle
 const ENTITY_MIN_COL = 0;
@@ -105,7 +106,7 @@ export default class SharedSpatialMap {
 
 	// Reused to hand a full record to pool.push without allocating a fresh array per operation (single writer per id)
 	private entityScratch: Array<number> = [0, 0, 0, 0, 0, 0, 0, 0];
-	private slotScratch: Array<number> = [0, 0, 0, 0, 0, 0];
+	private slotScratch: Array<number> = [0, 0, 0, 0, 0, 0, 0];
 
 	// Bucket block views over one contiguous region: Int32 for the per-bucket locks, Uint32 for the head indexes.
 	private bucketInts: Int32Array;
@@ -253,7 +254,7 @@ export default class SharedSpatialMap {
 		let entityIndex = this.entityPool.push(entity);
 		this.idMap.set(id, entityIndex);
 
-		this.linkRange(id, minCol, minRow, maxCol, maxRow);
+		this.linkRange(id, entityIndex, minCol, minRow, maxCol, maxRow);
 	}
 
 	// Move an entity to a new position. Assumes a single writer per entity id (the standard shared-memory pattern - each
@@ -286,7 +287,7 @@ export default class SharedSpatialMap {
 			return;
 		}
 
-		this.relinkRange(id, minCol, minRow, maxCol, maxRow, oldMinCol, oldMinRow, oldMaxCol, oldMaxRow);
+		this.relinkRange(id, entityIndex, minCol, minRow, maxCol, maxRow, oldMinCol, oldMinRow, oldMaxCol, oldMaxRow);
 
 		block[off + ENTITY_MIN_COL] = minCol;
 		block[off + ENTITY_MIN_ROW] = minRow;
@@ -379,13 +380,19 @@ export default class SharedSpatialMap {
 		}
 
 		let cellIds: Array<number> = [];
-		let seenEntities = maxResults > 1 ? new Set<number>() : undefined;
+		let seenEntities = filter !== undefined && maxResults > 1 ? new Set<number>() : undefined;
 		let startCol = this.colOf(x);
 		let startRow = this.rowOf(y);
 		let nearest: NearestNeighbor = { id: undefined, distance: maxDistanceSquared };
 		let visit = (col: number, row: number) => {
-			if(maxResults === 1 && filter === undefined) {
-				this.collectNearestBucket(nearest, col, row, x, y);
+			if(filter === undefined) {
+				if(maxResults === 1) {
+					this.collectNearestBucket(nearest, col, row, x, y);
+				} else {
+					this.collectNeighborCandidates(
+						candidates, col, row, startCol, startRow, x, y, maxResults, maxDistanceSquared,
+					);
+				}
 				return;
 			}
 			cellIds.length = 0;
@@ -504,12 +511,13 @@ export default class SharedSpatialMap {
 
 	// Push one slot into each cell of the rectangle, carrying the cell's own (col, row) and the entity's top-left cell as
 	// the dedup anchor. Every slot shares the id and anchor, so those are filled once before the loop.
-	private linkRange(id: number, minCol: number, minRow: number, maxCol: number, maxRow: number) {
+	private linkRange(id: number, entityIndex: number, minCol: number, minRow: number, maxCol: number, maxRow: number) {
 		let slot = this.slotScratch;
 		slot[SLOT_ID] = id;
 		slot[SLOT_ANCHOR_COL] = minCol;
 		slot[SLOT_ANCHOR_ROW] = minRow;
 		slot[SLOT_NEXT] = this.nullIndex;
+		slot[SLOT_ENTITY_INDEX] = entityIndex;
 
 		for(let row = minRow; row <= maxRow; row++) {
 			for(let col = minCol; col <= maxCol; col++) {
@@ -541,7 +549,7 @@ export default class SharedSpatialMap {
 	// are unlinked, so a query racing the move never sees the entity in neither rectangle. Doing it this way (rather than
 	// linkRange(new) + unlinkRange(old)) is what keeps overlap cells correct: unlinkFromBucket matches by id + cell and
 	// would splice out the freshly linked slot in an overlap cell, leaving the stale one behind and corrupting the anchor.
-	private relinkRange(id: number, minCol: number, minRow: number, maxCol: number, maxRow: number, oldMinCol: number, oldMinRow: number, oldMaxCol: number, oldMaxRow: number) {
+	private relinkRange(id: number, entityIndex: number, minCol: number, minRow: number, maxCol: number, maxRow: number, oldMinCol: number, oldMinRow: number, oldMaxCol: number, oldMaxRow: number) {
 		let ovMinCol = minCol > oldMinCol ? minCol : oldMinCol;
 		let ovMaxCol = maxCol < oldMaxCol ? maxCol : oldMaxCol;
 		let ovMinRow = minRow > oldMinRow ? minRow : oldMinRow;
@@ -553,6 +561,7 @@ export default class SharedSpatialMap {
 		slot[SLOT_ANCHOR_COL] = minCol;
 		slot[SLOT_ANCHOR_ROW] = minRow;
 		slot[SLOT_NEXT] = this.nullIndex;
+		slot[SLOT_ENTITY_INDEX] = entityIndex;
 
 		for(let row = minRow; row <= maxRow; row++) {
 			let inOverlapRow = hasOverlap && row >= ovMinRow && row <= ovMaxRow;
@@ -667,7 +676,9 @@ export default class SharedSpatialMap {
 		unlock(this.bucketInts, lockIndex);
 	}
 
-	private collectNearestBucket(nearest: NearestNeighbor, col: number, row: number, x: number, y: number) {
+	private collectNearestBucket(
+		nearest: NearestNeighbor, col: number, row: number, x: number, y: number,
+	) {
 		let bucket = this.bucketOf(col, row);
 		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
 		if(this.bucketHeads[headIndex] === this.nullIndex) {
@@ -680,14 +691,51 @@ export default class SharedSpatialMap {
 			let slot = this.slotPool.blockFor(index);
 			let off = this.slotPool.blockOffset(index);
 			if(slot[off + SLOT_COL] === col && slot[off + SLOT_ROW] === row) {
+				let entityIndex = slot[off + SLOT_ENTITY_INDEX];
+				let entity = this.entityPool.blockFor(entityIndex);
+				let entityOffset = this.entityPool.blockOffset(entityIndex);
 				let id = slot[off + SLOT_ID];
-				let entityIndex = this.idMap.get(id);
-				if(entityIndex !== undefined) {
-					let distance = this.entityDistanceSquared(entityIndex, x, y);
-					if(distance < nearest.distance
-						|| (distance === nearest.distance && (nearest.id === undefined || id < nearest.id))) {
-						nearest.id = id;
-						nearest.distance = distance;
+				let distance = this.entityBlockDistanceSquared(entity, entityOffset, x, y);
+				if(distance < nearest.distance
+					|| (distance === nearest.distance && (nearest.id === undefined || id < nearest.id))) {
+					nearest.id = id;
+					nearest.distance = distance;
+				}
+			}
+			index = slot[off + SLOT_NEXT];
+		}
+		unlock(this.bucketInts, lockIndex);
+	}
+
+	private collectNeighborCandidates(
+		candidates: Array<NeighborCandidate>, col: number, row: number, queryCol: number, queryRow: number,
+		x: number, y: number, maxResults: number, maxDistanceSquared: number,
+	) {
+		let bucket = this.bucketOf(col, row);
+		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
+		if(this.bucketHeads[headIndex] === this.nullIndex) {
+			return;
+		}
+		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
+		lock(this.bucketInts, lockIndex);
+		let index = this.bucketHeads[headIndex];
+		while(index !== this.nullIndex) {
+			let slot = this.slotPool.blockFor(index);
+			let off = this.slotPool.blockOffset(index);
+			if(slot[off + SLOT_COL] === col && slot[off + SLOT_ROW] === row) {
+				let entityIndex = slot[off + SLOT_ENTITY_INDEX];
+				let entity = this.entityPool.blockFor(entityIndex);
+				let entityOffset = this.entityPool.blockOffset(entityIndex);
+				let minCol = entity[entityOffset + ENTITY_MIN_COL];
+				let maxCol = entity[entityOffset + ENTITY_MAX_COL];
+				let minRow = entity[entityOffset + ENTITY_MIN_ROW];
+				let maxRow = entity[entityOffset + ENTITY_MAX_ROW];
+				let nearestCol = queryCol < minCol ? minCol : queryCol > maxCol ? maxCol : queryCol;
+				let nearestRow = queryRow < minRow ? minRow : queryRow > maxRow ? maxRow : queryRow;
+				if(col === nearestCol && row === nearestRow) {
+					let distance = this.entityBlockDistanceSquared(entity, entityOffset, x, y);
+					if(distance <= maxDistanceSquared) {
+						addCandidate(candidates, slot[off + SLOT_ID], distance, maxResults);
 					}
 				}
 			}
@@ -706,6 +754,10 @@ export default class SharedSpatialMap {
 	private entityDistanceSquared(entityIndex: number, x: number, y: number): number {
 		let entity = this.entityPool.blockFor(entityIndex);
 		let off = this.entityPool.blockOffset(entityIndex);
+		return this.entityBlockDistanceSquared(entity, off, x, y);
+	}
+
+	private entityBlockDistanceSquared(entity: CoordArray, off: number, x: number, y: number): number {
 		let minX = entity[off + ENTITY_X];
 		let minY = entity[off + ENTITY_Y];
 		return distanceSquaredToRect(
