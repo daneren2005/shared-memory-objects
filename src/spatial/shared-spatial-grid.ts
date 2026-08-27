@@ -10,6 +10,7 @@ import {
 	MinPriorityQueue, addCandidate, candidateLimit, distanceSquaredToRect,
 	type NeighborCandidate, type NearestNeighbor,
 } from './spatial-neighbors';
+import { getSpatialMapCapacity, getSpatialPoolChunkSize, type SpatialEntity } from './spatial-entity';
 
 // Uniform fixed-grid spatial index ("spatial hash grid") built for concurrent updates from many threads. Like
 // SharedQuadtree it avoids any runtime reshaping - the cols x rows array of cells is allocated once and never changes
@@ -178,11 +179,13 @@ export default class SharedSpatialGrid {
 				type: getCoordTypeConstructor(this.coordType),
 				dataLength: ENTITY_FIELDS,
 				maxLength: maxEntities,
+				maxChunkSize: getSpatialPoolChunkSize(maxEntities, ENTITY_FIELDS, getByteMultipler(this.coordType), memory.maxAllocationLength),
 			};
 			let slotPoolConfig: SharedPoolConfig<CoordArray> = {
 				type: getCoordTypeConstructor(this.coordType),
 				dataLength: SLOT_FIELDS,
 				maxLength: maxSlots,
+				maxChunkSize: getSpatialPoolChunkSize(maxSlots, SLOT_FIELDS, getByteMultipler(this.coordType), memory.maxAllocationLength),
 			};
 			let entityPoolAllocateCount = SharedPool.getAllocateCount(memory, entityPoolConfig);
 			let slotPoolAllocateCount = SharedPool.getAllocateCount(memory, slotPoolConfig);
@@ -218,7 +221,7 @@ export default class SharedSpatialGrid {
 			storeRawPointer(this.firstBlock.data, SLOT_POOL_POINTER_INDEX, slotPoolBlock.pointer);
 
 			let mapBlock = this.firstBlock.getSubAllocation(SharedSpatialGrid.ALLOCATE_COUNT + entityPoolAllocateCount + slotPoolAllocateCount, mapAllocateCount);
-			this.idMap = new SharedMap<number>(memory, { firstBlock: mapBlock });
+			this.idMap = new SharedMap<number>(memory, { firstBlock: mapBlock, capacity: getSpatialMapCapacity(maxEntities, memory.maxAllocationLength) });
 			storeRawPointer(this.firstBlock.data, MAP_POINTER_INDEX, mapBlock.pointer);
 		}
 
@@ -267,6 +270,61 @@ export default class SharedSpatialGrid {
 		this.idMap.set(id, entityIndex);
 
 		this.linkRange(id, minCol, minRow, maxCol, maxRow);
+	}
+
+	bulkInsert(entities: Iterable<SpatialEntity>) {
+		let byId = new Map<number, SpatialEntity>();
+		for(let entity of entities) {
+			byId.set(entity.id, entity);
+		}
+		let unique = Array.from(byId.values());
+		let existing = this.idMap.getAll(unique.map(entity => entity.id));
+		let mappings: Array<readonly [number, number]> = [];
+		let newCount = 0;
+		let newSlotCount = 0;
+		for(let i = 0; i < unique.length; i++) {
+			if(existing[i] === undefined) {
+				let entity = unique[i];
+				newCount++;
+				newSlotCount += (this.colOf(entity.x + (entity.width ?? 0)) - this.colOf(entity.x) + 1)
+					* (this.rowOf(entity.y + (entity.height ?? 0)) - this.rowOf(entity.y) + 1);
+			}
+		}
+		let nextEntityIndex = this.entityPool.reserveContiguous(newCount);
+		let nextSlotIndex = this.slotPool.reserveContiguous(newSlotCount);
+		for(let i = 0; i < unique.length; i++) {
+			let entity = unique[i];
+			let width = entity.width ?? 0;
+			let height = entity.height ?? 0;
+			if(existing[i] !== undefined) {
+				this.update(entity.id, entity.x, entity.y, width, height);
+				continue;
+			}
+
+			let minCol = this.colOf(entity.x);
+			let minRow = this.rowOf(entity.y);
+			let maxCol = this.colOf(entity.x + width);
+			let maxRow = this.rowOf(entity.y + height);
+			let entityIndex = nextEntityIndex++;
+			let block = this.entityPool.blockFor(entityIndex);
+			let offset = this.entityPool.blockOffset(entityIndex);
+			block[offset + ENTITY_MIN_COL] = minCol;
+			block[offset + ENTITY_MIN_ROW] = minRow;
+			block[offset + ENTITY_MAX_COL] = maxCol;
+			block[offset + ENTITY_MAX_ROW] = maxRow;
+			block[offset + ENTITY_X] = entity.x;
+			block[offset + ENTITY_Y] = entity.y;
+			block[offset + ENTITY_WIDTH] = width;
+			block[offset + ENTITY_HEIGHT] = height;
+			mappings.push([entity.id, entityIndex]);
+			for(let row = minRow; row <= maxRow; row++) {
+				let rowBase = row * this.cols;
+				for(let col = minCol; col <= maxCol; col++) {
+					this.linkReservedCell(rowBase + col, nextSlotIndex++, entity.id, minCol, minRow);
+				}
+			}
+		}
+		this.idMap.setAll(mappings);
 	}
 
 	// Move an entity to a new position. Assumes a single writer per entity id (the standard shared-memory pattern - each
@@ -646,8 +704,8 @@ export default class SharedSpatialGrid {
 		let cellHeads = this.cellHeads;
 		let slotIndex = pool.push(slot);
 		let lockIndex = cell * CELL_SIZE + CELL_LOCK_OFFSET;
-		lock(cellInts, lockIndex);
 		let headIndex = cell * CELL_SIZE + CELL_HEAD_OFFSET;
+		lock(cellInts, lockIndex);
 		pool.set(slotIndex, SLOT_NEXT, cellHeads[headIndex]);
 		cellHeads[headIndex] = slotIndex;
 		unlock(cellInts, lockIndex);
@@ -767,6 +825,21 @@ export default class SharedSpatialGrid {
 		unlock(cellInts, lockIndex);
 	}
 
+	private linkReservedCell(cell: number, slotIndex: number, id: number, anchorCol: number, anchorRow: number) {
+		let pool = this.slotPool;
+		let block = pool.blockFor(slotIndex);
+		let offset = pool.blockOffset(slotIndex);
+		block[offset + SLOT_ID] = id;
+		block[offset + SLOT_ANCHOR_COL] = anchorCol;
+		block[offset + SLOT_ANCHOR_ROW] = anchorRow;
+		let lockIndex = cell * CELL_SIZE + CELL_LOCK_OFFSET;
+		lock(this.cellInts, lockIndex);
+		let headIndex = cell * CELL_SIZE + CELL_HEAD_OFFSET;
+		block[offset + SLOT_NEXT] = this.cellHeads[headIndex];
+		this.cellHeads[headIndex] = slotIndex;
+		unlock(this.cellInts, lockIndex);
+	}
+
 	private collectNeighborCell(out: Array<number>, cell: number) {
 		let headIndex = cell * CELL_SIZE + CELL_HEAD_OFFSET;
 		if(this.cellHeads[headIndex] === this.nullIndex) {
@@ -883,4 +956,4 @@ interface SharedSpatialGridMemory {
 	firstBlock: SharedAllocatedMemory
 }
 
-export type { SharedSpatialGridConfig, SharedSpatialGridMemory, SpatialGridBounds };
+export type { SharedSpatialGridConfig, SharedSpatialGridMemory, SpatialGridBounds, SpatialEntity };

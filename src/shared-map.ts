@@ -141,59 +141,90 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 		let type = config && 'type' in config ? config.type : undefined;
 		let typeCode = getArrayTypeCode(type ?? Uint32Array);
 		this.cachedValueUnits = getByteMultipler(typeCode);
-		let table = this.memory.allocUI32(DEFAULT_CAPACITY * (2 + this.cachedValueUnits));
+		let requestedCapacity = config && 'capacity' in config ? config.capacity : undefined;
+		let capacity = DEFAULT_CAPACITY;
+		while(capacity < (requestedCapacity ?? DEFAULT_CAPACITY)) {
+			capacity *= 2;
+		}
+		if(capacity * (2 + this.cachedValueUnits) > this.memory.maxAllocationLength) {
+			throw new Error(`SharedMap capacity ${capacity} exceeds the largest contiguous allocation`);
+		}
+		let table = this.memory.allocUI32(capacity * (2 + this.cachedValueUnits));
 		storeRawPointer(this.pointerMemory.data, TABLE_POINTER_INDEX, table.pointer);
-		Atomics.store(this.pointerMemory.data, CAPACITY_INDEX, DEFAULT_CAPACITY);
+		Atomics.store(this.pointerMemory.data, CAPACITY_INDEX, capacity);
 		Atomics.store(this.pointerMemory.data, TYPE_INDEX, typeCode);
 	}
 
 	set(key: K, value: V[number]) {
-		let fullHashKey = get32BitHash(key);
+		lock(this.lock);
+		try {
+			this.setNoLock(key, value);
+		} finally {
+			unlock(this.lock);
+		}
+	}
 
+	setAll(entries: Iterable<readonly [K, V[number]]>) {
+		let batch = Array.from(entries);
 		lock(this.lock);
 		try {
 			let data = this.pointerMemory.data;
-			let length = data[LENGTH_INDEX];
-			let tombstones = data[TOMBSTONE_INDEX];
-			if((length + tombstones + 1) * LOAD_DENOMINATOR > data[CAPACITY_INDEX] * LOAD_NUMERATOR) {
-				this.resize();
-			}
-
-			this.ensureTable();
-			let slots = this.cachedSlots!;
-			let values = this.cachedValues! as NumericArrayIO;
-			let capacity = this.cachedCapacity;
-			let mask = capacity - 1;
-			let keysBase = capacity;
-			let idx = mix32(fullHashKey) & mask;
-			let firstTomb = -1;
-			// eslint-disable-next-line no-constant-condition
-			while(true) {
-				let state = slots[idx];
-				if(state === EMPTY) {
-					let target = firstTomb >= 0 ? firstTomb : idx;
-					slots[target] = FULL;
-					slots[keysBase + target] = fullHashKey;
-					values[target] = value;
-					data[LENGTH_INDEX]++;
-					// Reusing a tombstone slot reclaims it
-					if(firstTomb >= 0) {
-						data[TOMBSTONE_INDEX]--;
-					}
-					return;
-				} else if(state === TOMBSTONE) {
-					if(firstTomb < 0) {
-						firstTomb = idx;
-					}
-				} else if(slots[keysBase + idx] === fullHashKey) {
-					values[idx] = value;
-					return;
+			let projected = data[LENGTH_INDEX] + data[TOMBSTONE_INDEX] + batch.length;
+			if(projected * LOAD_DENOMINATOR > data[CAPACITY_INDEX] * LOAD_NUMERATOR) {
+				let capacity = data[CAPACITY_INDEX];
+				while(projected * LOAD_DENOMINATOR > capacity * LOAD_NUMERATOR) {
+					capacity *= 2;
 				}
-
-				idx = (idx + 1) & mask;
+				this.resize(capacity);
+			}
+			for(let [key, value] of batch) {
+				this.setNoLock(key, value);
 			}
 		} finally {
 			unlock(this.lock);
+		}
+	}
+
+	private setNoLock(key: K, value: V[number]) {
+		let fullHashKey = get32BitHash(key);
+		let data = this.pointerMemory.data;
+		let length = data[LENGTH_INDEX];
+		let tombstones = data[TOMBSTONE_INDEX];
+		if((length + tombstones + 1) * LOAD_DENOMINATOR > data[CAPACITY_INDEX] * LOAD_NUMERATOR) {
+			this.resize();
+		}
+
+		this.ensureTable();
+		let slots = this.cachedSlots!;
+		let values = this.cachedValues! as NumericArrayIO;
+		let capacity = this.cachedCapacity;
+		let mask = capacity - 1;
+		let keysBase = capacity;
+		let idx = mix32(fullHashKey) & mask;
+		let firstTomb = -1;
+		// eslint-disable-next-line no-constant-condition
+		while(true) {
+			let state = slots[idx];
+			if(state === EMPTY) {
+				let target = firstTomb >= 0 ? firstTomb : idx;
+				slots[target] = FULL;
+				slots[keysBase + target] = fullHashKey;
+				values[target] = value;
+				data[LENGTH_INDEX]++;
+				if(firstTomb >= 0) {
+					data[TOMBSTONE_INDEX]--;
+				}
+				return;
+			} else if(state === TOMBSTONE) {
+				if(firstTomb < 0) {
+					firstTomb = idx;
+				}
+			} else if(slots[keysBase + idx] === fullHashKey) {
+				values[idx] = value;
+				return;
+			}
+
+			idx = (idx + 1) & mask;
 		}
 	}
 
@@ -253,30 +284,46 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 	}
 
 	get(key: K): V[number] | undefined {
-		let fullHashKey = get32BitHash(key);
-
 		lock(this.lock);
 		try {
-			this.ensureTable();
-			let slots = this.cachedSlots!;
-			let values = this.cachedValues! as NumericArrayIO;
-			let capacity = this.cachedCapacity;
-			let mask = capacity - 1;
-			let keysBase = capacity;
-			let idx = mix32(fullHashKey) & mask;
-			// eslint-disable-next-line no-constant-condition
-			while(true) {
-				let state = slots[idx];
-				if(state === EMPTY) {
-					return undefined;
-				}
-				if(state === FULL && slots[keysBase + idx] === fullHashKey) {
-					return values[idx];
-				}
-				idx = (idx + 1) & mask;
-			}
+			return this.getNoLock(key);
 		} finally {
 			unlock(this.lock);
+		}
+	}
+
+	getAll(keys: Iterable<K>): Array<V[number] | undefined> {
+		lock(this.lock);
+		try {
+			let values: Array<V[number] | undefined> = [];
+			for(let key of keys) {
+				values.push(this.getNoLock(key));
+			}
+			return values;
+		} finally {
+			unlock(this.lock);
+		}
+	}
+
+	private getNoLock(key: K): V[number] | undefined {
+		let fullHashKey = get32BitHash(key);
+		this.ensureTable();
+		let slots = this.cachedSlots!;
+		let values = this.cachedValues! as NumericArrayIO;
+		let capacity = this.cachedCapacity;
+		let mask = capacity - 1;
+		let keysBase = capacity;
+		let idx = mix32(fullHashKey) & mask;
+		// eslint-disable-next-line no-constant-condition
+		while(true) {
+			let state = slots[idx];
+			if(state === EMPTY) {
+				return undefined;
+			}
+			if(state === FULL && slots[keysBase + idx] === fullHashKey) {
+				return values[idx];
+			}
+			idx = (idx + 1) & mask;
 		}
 	}
 	has(key: K): boolean {
@@ -330,7 +377,7 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 
 	// Rehash into a fresh table. Doubles capacity when live entries are crowding the table; when tombstones are the cause,
 	// a same-size table already reclaims them. Caller must hold the lock.
-	private resize() {
+	private resize(requestedCapacity?: number) {
 		this.ensureTable();
 		let oldTable = this.cachedTableMemory!;
 		let oldSlots = this.cachedSlots!;
@@ -339,8 +386,8 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 		let oldKeysBase = oldCapacity;
 		let length = Atomics.load(this.pointerMemory.data, LENGTH_INDEX);
 
-		let newCapacity = oldCapacity;
-		if((length + 1) * LOAD_DENOMINATOR > oldCapacity * LOAD_NUMERATOR) {
+		let newCapacity = requestedCapacity ?? oldCapacity;
+		if(requestedCapacity === undefined && (length + 1) * LOAD_DENOMINATOR > oldCapacity * LOAD_NUMERATOR) {
 			newCapacity = oldCapacity * 2;
 		}
 		let newTable = this.memory.allocUI32(this.tableLength(newCapacity));
@@ -392,6 +439,7 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 
 interface SharedMapConfig<V extends NumericArray> {
 	type?: TypedArrayConstructor<V>
+	capacity?: number
 }
 interface SharedMapMemory {
 	firstBlock: SharedAllocatedMemory | AllocatedMemory

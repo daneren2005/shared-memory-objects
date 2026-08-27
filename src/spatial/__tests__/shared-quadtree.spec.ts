@@ -18,6 +18,19 @@ function overlaps(a: Rect, q: { x: number, y: number, width: number, height: num
 }
 
 describe('SharedQuadtree', () => {
+	it('bulkInsert inserts a batch and keeps the last duplicate', () => {
+		let tree = new SharedQuadtree(new MemoryHeap(), { bounds: BOUNDS, maxLevels: 4, maxEntities: 10 });
+		tree.bulkInsert([
+			{ id: 1, x: 100, y: 100, width: 10, height: 10 },
+			{ id: 2, x: 800, y: 800 },
+			{ id: 1, x: 500, y: 500, width: 5, height: 5 },
+		]);
+
+		expect(tree.size).toBe(2);
+		expect(tree.search(490, 490, 20, 20)).toContain(1);
+		expect(tree.search(790, 790, 20, 20)).toContain(2);
+	});
+
 	let memory: MemoryHeap;
 	beforeEach(() => {
 		memory = new MemoryHeap();

@@ -220,7 +220,7 @@ export default class SharedPool<T extends NumericArray = Uint32Array> implements
 
 		// Reuse a recycled index if one is available. pop() can come back undefined when another thread drained the last
 		// slot between our two calls, so fall through to a fresh index rather than trusting a length() read
-		let newIndex = this.recycleStack.pop();
+		let newIndex = this.recycleStack.length === 0 ? undefined : this.recycleStack.pop();
 		if(newIndex === undefined) {
 			newIndex = Atomics.add(this.firstBlock.data, LENGTH_INDEX, 1);
 		}
@@ -236,6 +236,13 @@ export default class SharedPool<T extends NumericArray = Uint32Array> implements
 		}
 
 		return newIndex;
+	}
+
+	reserveContiguous(count: number): number {
+		if(!Number.isInteger(count) || count < 0) {
+			throw new Error(`Can't reserve ${count} pool entries`);
+		}
+		return Atomics.add(this.firstBlock.data, LENGTH_INDEX, count);
 	}
 
 	deleteIndex(index: number) {
@@ -267,6 +274,28 @@ export default class SharedPool<T extends NumericArray = Uint32Array> implements
 					dataBlockIndex = newDataBlockIndex;
 				}
 				yield this.getDataBlock(dataBlock, i % maxChunkSize);
+			}
+		}
+	}
+
+	*entries(): IterableIterator<[number, T]> {
+		const recycledValues: { [key: number]: true } = {};
+		for(let value of this.recycleStack) {
+			recycledValues[value] = true;
+		}
+
+		const maxChunkSize = this.cachedMaxChunkSize;
+		const length = Atomics.load(this.firstBlock.data, LENGTH_INDEX);
+		let dataBlock = this.getFullDataBlock(0);
+		let dataBlockIndex = 0;
+		for(let i = 0; i < length; i++) {
+			if(!recycledValues[i]) {
+				let newDataBlockIndex = Math.floor(i / maxChunkSize);
+				if(newDataBlockIndex !== dataBlockIndex) {
+					dataBlock = this.getFullDataBlock(i);
+					dataBlockIndex = newDataBlockIndex;
+				}
+				yield [i, this.getDataBlock(dataBlock, i % maxChunkSize)];
 			}
 		}
 	}

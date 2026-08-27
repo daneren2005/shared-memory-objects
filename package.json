@@ -30,7 +30,9 @@
   },
   "scripts": {
     "build": "vite build && tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/copy-vendored-types.mjs",
+    "build:game": "npm run build && node scripts/build-game.mjs",
     "dev": "vite",
+    "generate:memory-table": "npm run build && node scripts/generate-memory-table.mjs",
     "lint": "cross-env NODE_ENV=production oxlint .",
     "lint:fix": "cross-env NODE_ENV=production oxlint --fix .",
     "preview": "vite preview",

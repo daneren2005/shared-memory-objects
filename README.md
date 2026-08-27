@@ -67,7 +67,7 @@ let secondList = new SharedList(memory, mainList.getSharedMemory());
 - ConstantString - an immutable SharedString: the value is written once and never changes, so it drops the lock word and all of SharedString's read/write locking
 - SharedQuadtree - a fixed-depth region quadtree for live, concurrent spatial updates.  The tree shape is allocated once and never subdivides at runtime, so different cells never contend and entities can be inserted/moved/removed from any thread.  Each entity lives in the single deepest cell that fully contains it; `search(x, y, width, height)` returns a broad-phase superset of candidate ids (same guarantee as quadtree-ts).  Configure with `{ bounds: { x, y, width, height }, maxLevels, maxEntities, type }`, where `type` is `Float32Array` (default) or `Float64Array` for the stored coordinate precision.
 - SharedSpatialGrid - a uniform fixed grid for live, concurrent spatial updates, the flat-grid counterpart to `SharedQuadtree`.  The `cols x rows` array of cells is allocated once and never reshaped, so different cells never contend and entities can be inserted/moved/removed from any thread.  Unlike the quadtree, an entity is linked into *every* cell its rect overlaps, so a large or edge-straddling entity spans several cells; `search(x, y, width, height)` still returns each candidate id at most once (a per-slot anchor cell dedups without any shared state, so concurrent queries stay safe).  Locating a cell is O(1) arithmetic instead of a tree descent, which tends to beat the quadtree for evenly distributed, similarly-sized entities.  Configure with `{ bounds: { x, y, width, height }, gridSize, maxEntities, maxSlots, type }`, where `gridSize` defaults to `50` and `type` is `Float32Array` (default) or `Float64Array` for the stored coordinate precision.
-- SharedSpatialMap - an unbounded spatial hash for live, concurrent spatial updates, the boundless counterpart to `SharedSpatialGrid`.  It indexes the same way (an entity is linked into *every* virtual cell of side `gridSize` its rect overlaps) but drops the fixed `cols x rows` extent, so the world can be any size and cells may sit at any coordinate, positive or negative - there are no `bounds`.  A cell is hashed into a fixed array of `buckets` (a lock-striped separate-chaining hash table) that is allocated once and never resized, so different buckets never contend and only cells that collide onto one bucket serialize; `buckets` trades memory for that contention.  `search(x, y, width, height)` still returns each candidate id at most once (the same per-slot anchor-cell dedup).  Configure with `{ gridSize, buckets, maxEntities, maxSlots, type }`, where `gridSize` defaults to `50`, `buckets` defaults to `8192`, and `type` is `Float32Array` (default) or `Float64Array` for the stored coordinate precision.  A power-of-two `buckets` (like the default) is hashed with a bitmask instead of an integer modulo, so it locates a bucket faster; any other value still works but falls back to the modulo.
+- SharedSpatialMap - an unbounded spatial hash for live, concurrent spatial updates, the boundless counterpart to `SharedSpatialGrid`. It indexes the same way (an entity is linked into *every* virtual cell of side `gridSize` its rect overlaps) but drops the fixed `cols x rows` extent, so the world can be any size and cells may sit at any coordinate, positive or negative - there are no `bounds`. The table starts with `256` buckets by default and doubles when its slot load exceeds `0.5`, rehashing under an exclusive table lock while ordinary operations share the read side. Bucket storage grows in 256-bucket pages tracked by a `SharedStack`, so neither the final table nor its pointer spine is reserved up front. Configure with `{ gridSize, buckets, maxBuckets, maxEntities, maxSlots, type }`; `buckets` sets the initial count and `maxBuckets` optionally caps growth. Power-of-two counts use a bitmask instead of integer modulo.
 
 All three spatial structures accept an optional ID predicate as the final search argument, such as `search(x, y, width, height, id => enemies.has(id))`. `searchInto(out, x, y, width, height, filter?)` provides the same filtering while appending matches to a reusable result array.
 
@@ -76,25 +76,27 @@ All three spatial structures accept an optional ID predicate as the final search
 
 Freshly allocated with the default options:
 
-| Structure         | Used Memory |
-| -------------     | ----------- |
-| SharedList        | 16 bytes    |
-| SharedVector      | 32 bytes    |
-| SharedStack       | 144 bytes   |
-| SharedPool        | 656 bytes   |
-| SharedMap         | 216 bytes   |
-| SharedQuadtree    | 6064 bytes  |
-| SharedQuadtree(6) | 47024 bytes |
-| SharedSpatialGrid (20x20 cells) | 7216 bytes  |
-| SharedSpatialGrid (80x80 cells) | 55216 bytes |
-| SharedSpatialMap (2048 buckets) | 21160 bytes |
-| SharedSpatialMap (8192 buckets) | 70312 bytes |
+| Structure                       | Used Memory |
+| ------------------------------- | ----------- |
+| SharedList                      | 16 bytes    |
+| SharedVector                    | 32 bytes    |
+| SharedStack                     | 144 bytes   |
+| SharedPool                      | 664 bytes   |
+| SharedMap                       | 216 bytes   |
+| SharedQuadtree                  | 6064 bytes  |
+| SharedQuadtree(6)               | 47024 bytes |
+| SharedSpatialGrid (20x20 cells) | 8816 bytes  |
+| SharedSpatialGrid (80x80 cells) | 56816 bytes |
+| SharedSpatialMap (default)      | 8984 bytes  |
+| SharedSpatialMap (2048 buckets) | 23384 bytes |
 
 `SharedQuadtree`'s footprint is dominated by its fixed node array, which is allocated once up front and never grows.  The default `maxLevels` of 4 is a complete tree of 341 nodes (`(4^(maxLevels+1) - 1) / 3`), so the number scales with `maxLevels`: a deeper tree resolves smaller entities but costs `~2 u32` per node.  The rest is its internal `SharedPool` of entity records and the `SharedMap` that indexes entities by id, whose header blocks are inlined into the tree's own allocation (the same way `SharedPool` inlines its two stacks) so the whole spine is one contiguous block instead of three separate pointer resources.  The record (id, `x/y/w/h`, node, bucket link) is stored at the configured precision, defaulting to `Float32` to match a physics engine that keeps positions in `Float32`.  `Float32` stays exact as long as entity ids and the entity count both stay under 2^24 (~16.7M); pass `type: Float64Array` if you need ids or a capacity beyond that (constructing a `Float32` tree with `maxEntities` over 2^24 throws), at the cost of more memory per entity.
 
 `SharedSpatialGrid`'s footprint is likewise dominated by its fixed cell array (`cols x rows` cells at `~2 u32` each), so it scales with cell count rather than `maxLevels`: `cols = ceil(width / gridSize)` and `rows = ceil(height / gridSize)`, so a smaller `gridSize` resolves finer at the cost of more cells (the 20x20 grid above is a 1000x1000 world at `gridSize` 50; the 80x80 grid is a 4000x4000 world at `gridSize` 50).  The rest is two inlined `SharedPool`s - one of entity records (the occupied cell rectangle, keyed by an inlined `SharedMap` of id -> index) and one of per-cell "slot" records (`id`, anchor cell, bucket link) - since a multi-cell entity needs one slot per cell it overlaps.  `maxSlots` therefore defaults to `maxEntities * 4` to leave headroom for spanning entities.  Coordinate precision follows the same `Float32`-default rule as the quadtree (ids, both pools' indices, and cell indices must stay under 2^24 for `Float32`; pass `type: Float64Array` otherwise).
 
-`SharedSpatialMap`'s footprint is dominated by its fixed bucket array (`buckets` at `~2 u32` each) rather than a cell array, so it scales with `buckets` instead of world size - the whole point is that the world has no fixed extent.  More buckets means shorter hash chains (less contention and faster queries) at the cost of more memory; the default of `8192` is the bulk of the 70312 bytes above.  The rest is the same two inlined `SharedPool`s as the grid - one of entity records (the occupied cell rectangle, keyed by an inlined `SharedMap` of id -> index) and one of per-cell "slot" records - except each slot also stores its own `(col, row)` (a bucket mixes slots from every cell that hashes to it, so a walk must filter to the cell it is looking at).  `maxSlots` again defaults to `maxEntities * 4`, and coordinate precision follows the same `Float32`-default rule (ids and both pools' indices under 2^24, and cell `(col, row)` within `±2^24`, for `Float32`; pass `type: Float64Array` otherwise).
+`SharedSpatialMap` starts at 8984 bytes with its default 256 buckets, about 87% less than the former fixed 8192-bucket table's 70312 bytes. When the number of allocated slots exceeds half the active bucket count, it doubles the count and rebuilds the bucket chains. Its 256-bucket pages remain at stable addresses, while their pointers live in a `SharedStack` that grows in segments. `buckets` is therefore an initial size hint rather than a permanent sizing decision; `map.buckets` reports the current count. `maxBuckets` can stop growth for a deliberately collision-heavy or memory-capped table and otherwise defaults high enough to preserve the target load through `maxSlots`. The rest is the same two inlined `SharedPool`s as the grid - one of entity records and one of per-cell slot records. `maxSlots` defaults to `maxEntities * 4`, and coordinate precision follows the same `Float32`-default rule.
+
+All three spatial indexes accept `bulkInsert(entities)`, where each entity has `{ id, x, y, width?, height? }`. Duplicate ids keep their last value. The method retains the normal thread-safety guarantees while reserving entity and slot ranges with one atomic operation, sizing the ID map once, and writing records directly into their pool blocks; `SharedSpatialMap` also sizes its bucket table once before linking a new batch. When an explicit entity or slot capacity is at most 16384, its pool uses one bounded contiguous chunk instead of a series of 100-record chunks. Larger and default capacities retain incremental allocation so an empty index does not reserve excessive memory.
 
 ## Thread Safety
 - Memory allocations is thread safe as long as it does not need to create a new buffer.  Right now that can only be done from the main thread.  I just make sure there is always an extra empty buffer with SharedHeap.ensureSpareBuffer() before sending more work to worker threads.
@@ -104,7 +106,7 @@ Freshly allocated with the default options:
 - ConstantString is safe to read from any thread without a lock precisely because it is never written after construction
 - SharedQuadtree is thread safe.  Its node structure never changes shape, so concurrency reduces to per-cell content updates guarded by a per-node lock
 - SharedSpatialGrid is thread safe.  Its cell array never changes shape, so concurrency reduces to per-cell content updates guarded by a per-cell lock; a query racing an in-flight move sees the entity in its old or new cells (or briefly both), never neither
-- SharedSpatialMap is thread safe.  Its bucket array never changes shape (it is sized up front and never rehashed), so concurrency reduces to per-bucket content updates guarded by a per-bucket lock; like the grid, a query racing an in-flight move sees the entity in its old or new cells (or briefly both), never neither
+- SharedSpatialMap is thread safe. Normal operations share a table read lock and retain their per-bucket locks; a resize takes the exclusive table lock, doubles the bucket count, and rebuilds every live slot before atomically publishing the new count. Like the grid, a query racing an in-flight move sees the entity in its old or new cells (or briefly both), never neither.
 
 
 ## Performance
@@ -270,94 +272,110 @@ native map
 ```
 
 ### SharedQuadtree, SharedSpatialGrid & SharedSpatialMap vs quadtree-ts and Flatbush
-`SharedQuadtree`, `SharedSpatialGrid`, and `SharedSpatialMap` are compared against [quadtree-ts](https://github.com/timohausmann/quadtree-ts) and [Flatbush](https://github.com/mourner/flatbush).  2000 entities are indexed in a 4000x4000 world at `maxLevels` 6 (the grid uses a matching `gridSize` of `4000 / 2^6`; the map uses that `gridSize` with `8192` buckets), followed by 2000 broad-phase queries and separate nearest-neighbor workloads for one and ten entities within 500 units.  Flatbush is a packed static index and leads build and query performance, but it cannot be updated after indexing.  The 20% movement benchmark therefore compares updating 400 entities in place in each shared structure against rebuilding the complete 2000-entity Flatbush index.  In that workload, the shared spatial map is 2.66x faster than rebuilding Flatbush, the shared spatial grid is 2.42x faster, and the shared quadtree is 1.15x faster.
+`SharedQuadtree`, `SharedSpatialGrid`, and `SharedSpatialMap` are compared against [quadtree-ts](https://github.com/timohausmann/quadtree-ts) and [Flatbush](https://github.com/mourner/flatbush). 2000 entities are indexed in a 4000x4000 world at `maxLevels` 6 (the grid and map use a matching `gridSize` of `4000 / 2^6`; the map starts with its default 256 buckets and grows automatically), followed by 2000 broad-phase queries and separate nearest-neighbor workloads for one and ten entities within 500 units. The individual and bulk-insert benchmarks are separate; Flatbush rebuilds the same packed static index in both because it cannot insert into an existing index. Bulk insertion improves throughput by 35% for the quadtree, 38% for the grid, and 141% for the spatial map in this run. Flatbush remains 4.34-5.19x faster because it writes a static packed index without maintaining entity records, an ID map, mutable linked buckets, or concurrency locks. An exclusive-access prototype that skipped spatial locks was only another 5%, 16%, and 8% faster, respectively, so no unsafe API was retained. The 20% movement benchmark compares updating 400 entities in place against rebuilding the complete Flatbush index.
 
-Spatial: build a tree of 2000 entities
+Spatial: insert 2000 entities individually
 ```
-name                      hz     min      max    mean     p75     p99     p995     p999     rme  samples
-shared quadtree       338.95  1.6234   8.1613  2.9503  3.3489  6.6913   8.1613   8.1613  ±5.63%      170
-shared spatial grid           284.56  1.7377  10.9921  3.5142  4.1922  8.3428  10.9921  10.9921  ±6.86%      143
-shared spatial map    337.29  1.6040   8.2749  2.9648  3.2585  7.9714   8.2749   8.2749  ±5.20%      169
-quadtree-ts         1,241.06  0.3860   9.3226  0.8058  0.8723  4.4848   5.4128   9.3226  ±7.34%      621
-flatbush            3,143.37  0.1400   6.7574  0.3181  0.2999  1.3990   2.2252   5.8414  ±5.60%     1572
+name                       hz     min     max    mean     p75     p99    p995    p999     rme  samples
+shared quadtree      1,212.63  0.7296  1.3859  0.8247  0.8331  1.2833  1.2873  1.3859  ±1.04%      607
+shared spatial grid  1,375.28  0.6699  2.1926  0.7271  0.7180  1.1583  1.3865  2.1926  ±1.06%      688
+shared spatial map     657.46  1.3579  3.0925  1.5210  1.6021  2.2632  2.8197  3.0925  ±1.48%      329
+quadtree-ts          2,987.46  0.2852  0.8549  0.3347  0.3314  0.5781  0.6212  0.7504  ±1.08%     1494
+flatbush             7,952.20  0.0842  3.5122  0.1258  0.1213  0.2721  0.3678  3.0778  ±3.40%     3977
 
 flatbush
-2.53x faster than quadtree-ts
-9.27x faster than shared quadtree
-9.32x faster than shared spatial map
-11.05x faster than shared spatial grid
+2.66x faster than quadtree-ts
+5.78x faster than shared spatial grid
+6.56x faster than shared quadtree
+12.10x faster than shared spatial map
+```
+
+Spatial: bulk insert 2000 entities
+```
+name                       hz     min     max    mean     p75     p99    p995    p999     rme  samples
+shared quadtree      1,639.98  0.5159  1.2655  0.6098  0.6029  1.0288  1.1218  1.2655  ±1.24%      820
+shared spatial grid  1,896.56  0.4640  1.2814  0.5273  0.5231  0.8856  0.9616  1.2814  ±1.03%      949
+shared spatial map   1,587.58  0.5441  1.4163  0.6299  0.6269  1.0970  1.1545  1.4163  ±1.23%      794
+quadtree-ts          2,949.02  0.2851  0.8573  0.3391  0.3366  0.6154  0.6671  0.7323  ±1.14%     1475
+flatbush             8,239.33  0.0839  3.2123  0.1214  0.1167  0.2709  0.3513  2.8912  ±3.38%     4120
+
+flatbush
+2.79x faster than quadtree-ts
+4.34x faster than shared spatial grid
+5.02x faster than shared quadtree
+5.19x faster than shared spatial map
 ```
 
 Spatial: 2000 broad-phase queries
 ```
 name                    hz     min      max    mean     p75      p99     p995     p999     rme  samples
-shared quadtree     136.47  4.6172  14.9937  7.3275  8.6034  14.9937  14.9937  14.9937  ±6.53%       69
-shared spatial grid         388.46  0.9257   7.2489  2.5743  3.1070   7.0553   7.2489   7.2489  ±6.91%      195
-shared spatial map  295.50  1.5615  11.5353  3.3841  3.5785  10.5017  11.5353  11.5353  ±7.52%      148
-quadtree-ts         179.54  2.7824  11.9709  5.5698  6.5513  11.9709  11.9709  11.9709  ±6.82%       90
-flatbush            673.48  0.8118   6.0650  1.4848  1.6317   5.4448   5.8011   6.0650  ±5.57%      339
+shared quadtree        366.51  2.5524  4.3675  2.7284  2.7761  3.8666  4.3675  4.3675  ±1.29%      184
+shared spatial grid  1,030.39  0.9007  1.6533  0.9705  0.9815  1.3996  1.4830  1.6533  ±0.87%      516
+shared spatial map     695.37  1.3453  2.4798  1.4381  1.4295  2.1762  2.2132  2.4798  ±1.16%      348
+quadtree-ts            486.60  1.9084  2.9569  2.0551  2.1063  2.7593  2.8674  2.9569  ±0.97%      244
+flatbush             1,373.81  0.6734  1.1711  0.7279  0.7272  1.0091  1.0517  1.1711  ±0.75%      687
 
 flatbush
-1.73x faster than shared spatial grid
-2.28x faster than shared spatial map
-3.75x faster than quadtree-ts
-4.93x faster than shared quadtree
+1.33x faster than shared spatial grid
+1.98x faster than shared spatial map
+2.82x faster than quadtree-ts
+3.75x faster than shared quadtree
 ```
 
 Spatial: 2000 single nearest-neighbor queries (within 500 units)
 ```
 name                     hz     min     max    mean     p75     p99    p995    p999     rme  samples
-shared quadtree      145.32  5.6011  9.3308  6.8814  7.2121  9.3308  9.3308  9.3308  ±2.86%       73
-shared spatial grid  254.07  2.9685  5.1824  3.9360  4.4092  5.1806  5.1824  5.1824  ±2.67%      128
-shared spatial map   412.60  1.7945  3.7871  2.4237  2.6459  3.6749  3.7835  3.7871  ±2.31%      207
-flatbush              528.65  1.6299  2.9857  1.8916  2.0122  2.6218  2.6608  2.9857  ±1.55%      265
+shared quadtree      202.09  4.6839  5.7693  4.9483  5.0355  5.7382  5.7693  5.7693  ±0.87%      102
+shared spatial grid  335.06  2.6652  4.6020  2.9845  3.0485  4.4999  4.6020  4.6020  ±1.85%      168
+shared spatial map   411.41  2.0371  3.9992  2.4307  2.6217  3.6954  3.8876  3.9992  ±2.67%      206
+flatbush             590.88  1.5631  3.1001  1.6924  1.6861  2.8048  2.9393  3.1001  ±1.27%      296
 
 flatbush
-1.28x faster than shared spatial map
-2.08x faster than shared spatial grid
-3.64x faster than shared quadtree
+1.44x faster than shared spatial map
+1.76x faster than shared spatial grid
+2.92x faster than shared quadtree
 ```
 
 Spatial: 2000 ten nearest-neighbor queries (within 500 units)
 ```
 name                      hz      min      max     mean      p75      p99     p995     p999     rme  samples
-shared quadtree      25.0990  35.7043  43.5157  39.8423  41.2887  43.5157  43.5157  43.5157  ±3.17%       13
-shared spatial grid  31.6150  27.7406  34.3887  31.6306  32.3982  34.3887  34.3887  34.3887  ±3.09%       16
-shared spatial map   70.0569  11.9956  19.8365  14.2741  14.8941  19.8365  19.8365  19.8365  ±3.29%       36
-flatbush              235.47   3.7330   5.5620   4.2468   4.4875   5.3483   5.5620   5.5620  ±1.51%      118
+shared quadtree      30.6419  30.8902  35.3604  32.6350  33.3034  35.3604  35.3604  35.3604  ±2.30%       16
+shared spatial grid  37.4153  24.4494  31.1661  26.7271  28.9389  31.1661  31.1661  31.1661  ±3.97%       19
+shared spatial map   82.6032  11.3958  14.0954  12.1061  12.3320  14.0954  14.0954  14.0954  ±1.24%       42
+flatbush              264.77   3.5514   4.9065   3.7768   3.8120   4.8969   4.9065   4.9065  ±1.17%      133
 
 flatbush
-3.36x faster than shared spatial map
-7.45x faster than shared spatial grid
-9.38x faster than shared quadtree
+3.21x faster than shared spatial map
+7.08x faster than shared spatial grid
+8.64x faster than shared quadtree
 ```
 
 Spatial: move 400 of 2000 entities one step
 ```
 name                       hz     min     max    mean     p75     p99    p995    p999     rme  samples
-shared quadtree      5,020.99  0.0832  2.4519  0.1992  0.1941  0.7585  0.9908  2.2573  ±2.76%     2512
-shared spatial grid         10,595.09  0.0315  4.7010  0.0944  0.0827  0.5556  0.8603  1.7301  ±3.86%     5298
-shared spatial map  11,623.18  0.0294  5.2839  0.0860  0.0717  0.5410  0.8127  2.0291  ±4.20%     5812
-flatbush (rebuild)   4,372.62  0.0880  5.2188  0.2287  0.2381  0.7376  1.7063  4.5994  ±4.86%     2187
+shared quadtree      12,139.41  0.0768  0.3493  0.0824  0.0800  0.1575  0.1898  0.2901  ±0.50%     6070
+shared spatial grid  22,487.06  0.0337  3.0813  0.0445  0.0532  0.0983  0.1459  0.4174  ±1.72%    11244
+shared spatial map   19,975.95  0.0296  0.1885  0.0501  0.0554  0.0707  0.0819  0.1385  ±0.45%     9989
+flatbush (rebuild)    5,505.80  0.0860  3.4945  0.1816  0.1934  0.3027  0.3760  2.9520  ±2.87%     2754
 
-shared spatial map
-1.10x faster than shared spatial grid
-2.31x faster than shared quadtree
-2.66x faster than flatbush (rebuild)
+shared spatial grid
+1.13x faster than shared spatial map
+1.85x faster than shared quadtree
+4.08x faster than flatbush (rebuild)
 ```
 
 Spatial: move all 2000 entities one step
 ```
 name                      hz      min      max     mean      p75      p99     p995     p999      rme  samples
-shared quadtree       929.24   0.4555   4.3723   1.0761   1.1563   3.0015   3.3396   4.3723   ±3.94%      465
-shared spatial grid         2,956.61   0.1646   2.9637   0.3382   0.3650   1.1118   1.2213   2.2467   ±2.61%     1479
-shared spatial map  2,510.91   0.1786   7.0300   0.3983   0.4096   1.5840   1.9618   3.5255   ±4.50%     1256
-quadtree-ts          27.6192  13.1874  76.4572  36.2067  55.1139  76.4572  76.4572  76.4572  ±32.72%       14
+shared quadtree      1,355.57   0.4382   1.2586   0.7377   0.8367   1.0493   1.1394   1.2586  ±1.37%      678
+shared spatial grid  3,121.59   0.2021   0.7684   0.3203   0.3794   0.4725   0.5177   0.7191  ±1.26%     1561
+shared spatial map   3,450.37   0.1655   0.6403   0.2898   0.3147   0.4075   0.5172   0.5991  ±0.98%     1726
+quadtree-ts           52.9839  13.9189  21.4902  18.8737  20.2757  21.4902  21.4902  21.4902  ±4.16%       27
 
-shared spatial grid
-1.18x faster than shared spatial map
-3.18x faster than shared quadtree
-107.05x faster than quadtree-ts
+shared spatial map
+1.11x faster than shared spatial grid
+2.55x faster than shared quadtree
+65.12x faster than quadtree-ts
 ```
 
 ## Credit

@@ -46,6 +46,19 @@ describe('SharedPool', () => {
 		expect(() => vector.set(index, 3, 0)).toThrow('3 is out of dataLength bounds 3');
 	});
 
+	it('reserves a contiguous range', () => {
+		let pool = new SharedPool(memory, { type: Uint32Array });
+		let start = pool.reserveContiguous(3);
+
+		for(let i = 0; i < 3; i++) {
+			pool.set(start + i, 0, 20 + i);
+		}
+
+		expect(start).toEqual(0);
+		expect(pool.length).toEqual(3);
+		expect(flat(pool)).toEqual([20, 21, 22]);
+	});
+
 	it('continually grows memory as needed', () => {
 		let vector = new SharedPool(memory, {
 			type: Uint32Array,

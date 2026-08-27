@@ -9,7 +9,8 @@ import type { SpatialKind } from './spatial-safety.worker';
 // the world for several rounds, all concurrently, hammering the per-node/cell/bucket locks. Afterwards a full-world
 // search must return exactly the surviving ids, each valid and unique: a torn link or lost update would show up as a
 // garbage id, a duplicate, or a count mismatch.
-export const ID_RANGE = 1_000_000;
+// Leave room for high worker counts without crossing Float32's exact-integer limit.
+export const ID_RANGE = 100_000;
 export const WORLD = { x: 0, y: 0, width: 4000, height: 4000 };
 
 interface SpatialStructure {

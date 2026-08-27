@@ -18,6 +18,19 @@ function overlaps(a: Rect, q: { x: number, y: number, width: number, height: num
 }
 
 describe('SharedSpatialGrid', () => {
+	it('bulkInsert inserts a batch and keeps the last duplicate', () => {
+		let grid = new SharedSpatialGrid(new MemoryHeap(), { bounds: BOUNDS, gridSize: 50, maxEntities: 10 });
+		grid.bulkInsert([
+			{ id: 1, x: 100, y: 100, width: 10, height: 10 },
+			{ id: 2, x: 800, y: 800 },
+			{ id: 1, x: 500, y: 500, width: 5, height: 5 },
+		]);
+
+		expect(grid.size).toBe(2);
+		expect(grid.search(490, 490, 20, 20)).toContain(1);
+		expect(grid.search(790, 790, 20, 20)).toContain(2);
+	});
+
 	let memory: MemoryHeap;
 	beforeEach(() => {
 		memory = new MemoryHeap();

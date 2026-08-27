@@ -16,6 +16,19 @@ function overlaps(a: Rect, q: { x: number, y: number, width: number, height: num
 }
 
 describe('SharedSpatialMap', () => {
+	it('bulkInsert inserts a batch and keeps the last duplicate', () => {
+		let map = new SharedSpatialMap(new MemoryHeap(), { gridSize: 50, maxEntities: 10 });
+		map.bulkInsert([
+			{ id: 1, x: 100, y: 100, width: 10, height: 10 },
+			{ id: 2, x: 800, y: 800 },
+			{ id: 1, x: 500, y: 500, width: 5, height: 5 },
+		]);
+
+		expect(map.size).toBe(2);
+		expect(map.search(490, 490, 20, 20)).toContain(1);
+		expect(map.search(790, 790, 20, 20)).toContain(2);
+	});
+
 	let memory: MemoryHeap;
 	beforeEach(() => {
 		memory = new MemoryHeap();
@@ -151,7 +164,7 @@ describe('SharedSpatialMap', () => {
 		it('keeps a single slot even when the two overlap cells collide onto one bucket', () => {
 			// A single bucket forces every cell of both rectangles to share one chain, so the relink can only be correct if it
 			// matches slots by cell (col, row), not just id.
-			let map = new SharedSpatialMap(memory, { gridSize: 50, buckets: 1 });
+			let map = new SharedSpatialMap(memory, { gridSize: 50, buckets: 1, maxBuckets: 1 });
 			map.insert(1, 95, 5, 20, 0);
 			map.update(1, 45, 5, 20, 0);
 			expect(map.search(0, 0, 1000, 1000)).toEqual([1]);
@@ -210,7 +223,7 @@ describe('SharedSpatialMap', () => {
 	});
 
 	it('updates across negative cell boundaries even when cells share a bucket', () => {
-		let map = new SharedSpatialMap(memory, { gridSize: 50, buckets: 1 });
+		let map = new SharedSpatialMap(memory, { gridSize: 50, buckets: 1, maxBuckets: 1 });
 		map.insert(1, -51, -1, 2, 2);
 		map.update(1, -1, -51, 2, 2);
 
@@ -302,7 +315,7 @@ describe('SharedSpatialMap', () => {
 
 	it('handles many distinct cells colliding onto a tiny bucket array', () => {
 		// Far fewer buckets than occupied cells forces heavy chaining, so id+cell disambiguation is exercised hard
-		let map = new SharedSpatialMap(memory, { gridSize: 10, buckets: 4 });
+		let map = new SharedSpatialMap(memory, { gridSize: 10, buckets: 4, maxBuckets: 4 });
 		let rects: Array<Rect> = [];
 		for(let id = 0; id < 60; id++) {
 			let rect = { id, x: id * 37, y: id * 53, width: 6, height: 6 };
@@ -350,18 +363,32 @@ describe('SharedSpatialMap', () => {
 	});
 
 	it('reports its gridSize and bucket count', () => {
-		let map = new SharedSpatialMap(memory, { gridSize: 40, buckets: 1024 });
+		let map = new SharedSpatialMap(memory, { gridSize: 40, buckets: 1024, maxBuckets: 4096 });
 		expect(map.gridSize).toEqual(40);
 		expect(map.buckets).toEqual(1024);
+		expect(map.maxBuckets).toEqual(4096);
 
 		let clone = new SharedSpatialMap(memory, map.getSharedMemory());
 		expect(clone.gridSize).toEqual(40);
 		expect(clone.buckets).toEqual(1024);
+		expect(clone.maxBuckets).toEqual(4096);
+	});
+
+	it('publishes bucket growth to existing shared instances', () => {
+		let main = new SharedSpatialMap(memory, { gridSize: 50, buckets: 4, maxBuckets: 64 });
+		let clone = new SharedSpatialMap(memory, main.getSharedMemory());
+		for(let i = 0; i < 20; i++) {
+			main.insert(i, i * 100, i * 100);
+		}
+		expect(main.buckets).toBeGreaterThan(4);
+		expect(clone.buckets).toEqual(main.buckets);
+		expect(clone.search(0, 0, 2000, 2000)).toHaveLength(20);
 	});
 
 	it('defaults gridSize to 50', () => {
 		let map = new SharedSpatialMap(memory);
 		expect(map.gridSize).toEqual(50);
+		expect(map.buckets).toEqual(256);
 	});
 
 	it('search returns every true overlap (randomized cross-check against brute force)', () => {
@@ -485,14 +512,32 @@ describe('SharedSpatialMap', () => {
 	});
 
 	describe('usedMemory', () => {
-		it('sums the header, bucket block, pools, and id map', () => {
+		it('sums the header, bucket pages, pointer stack, pools, and id map', () => {
 			let map = new SharedSpatialMap(memory);
 			expect(map.usedMemory).toBeGreaterThan(0);
 		});
-		it('more buckets starts with more memory', () => {
+		it('an explicitly larger initial bucket count starts with more memory', () => {
 			let few = new SharedSpatialMap(memory, { buckets: 256 });
 			let many = new SharedSpatialMap(new MemoryHeap(), { buckets: 16384 });
 			expect(many.usedMemory).toBeGreaterThan(few.usedMemory);
+		});
+
+		it('grows the bucket count and storage as slots are inserted', () => {
+			let map = new SharedSpatialMap(memory, { gridSize: 50, buckets: 64, maxBuckets: 1024 });
+			let before = map.usedMemory;
+			for(let i = 0; i < 100; i++) {
+				map.insert(i, i * 100, i * 100);
+			}
+			expect(map.buckets).toBeGreaterThan(64);
+			expect(map.usedMemory).toBeGreaterThan(before);
+		});
+
+		it('honors maxBuckets', () => {
+			let map = new SharedSpatialMap(memory, { gridSize: 50, buckets: 4, maxBuckets: 8 });
+			for(let i = 0; i < 100; i++) {
+				map.insert(i, i * 100, i * 100);
+			}
+			expect(map.buckets).toEqual(8);
 		});
 
 		it('is shared between two instances over the same memory', () => {

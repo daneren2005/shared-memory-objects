@@ -3,23 +3,24 @@ import AllocatedMemory from '../allocated-memory';
 import type MemoryHeap from '../memory-heap';
 import SharedPool, { type SharedPoolConfig } from '../shared-pool';
 import SharedMap from '../shared-map';
+import SharedStack from '../shared-stack';
 import { lock, unlock } from '../lock/simple-lock';
+import { readLock, readUnlock, writeLock, writeUnlock } from '../lock/read-write-lock';
 import { getPointer, loadRawPointer, storeRawPointer } from '../utils/pointer';
 import { ARRAY_TYPE, getArrayTypeCode, getByteMultipler, makeArrayView } from '../utils/array-type';
 import {
 	addCandidate, candidateLimit, distanceSquaredToRect, type NeighborCandidate, type NearestNeighbor,
 } from './spatial-neighbors';
+import { getSpatialMapCapacity, getSpatialPoolChunkSize, type SpatialEntity } from './spatial-entity';
 
 // Unbounded spatial hash ("spatial multimap") built for concurrent updates from many threads. It indexes the same way
 // SharedSpatialGrid does - every entity occupies each virtual cell (of side gridSize) its rect overlaps - but it drops
 // the grid's fixed cols x rows extent so the world is unbounded: cells may sit at any (col, row), positive or negative.
 //
 // A cell (col, row) is not stored at a fixed array index (there is no finite grid to index); instead it is hashed into a
-// fixed-size array of buckets - hash(col, row) % bucketCount - and every cell that lands on a bucket shares that bucket's
-// intrusive singly-linked list. This is the classic lock-striped separate-chaining concurrent hash table: the bucket
-// array is allocated once and never resized (a runtime rehash would race readers mid-traversal, the same hazard
-// SharedQuadtree/SharedSpatialGrid avoid by never reshaping), so concurrency reduces to per-bucket content updates.
-// Two threads contend only when their cells hash to the same bucket, so bucketCount trades memory for that contention.
+// growable hash table of buckets and every cell that lands on a bucket shares that bucket's intrusive singly-linked list.
+// Normal operations share a table read lock. When the average slot load grows past 0.5, one writer doubles the bucket
+// count and rebuilds the chains under the exclusive side of that lock. Bucket pages and their pointer stack only grow.
 //
 // Because distinct cells collide onto one bucket, a slot must carry its own cell (col, row): a bucket walk considers only
 // slots whose cell matches the cell being queried. Each (entity, cell) membership is a "slot" record in a SharedPool; the
@@ -36,7 +37,7 @@ import {
 // - and cell (col, row) stay within [-2^24, 2^24]. Need more (or ids >= 2^24)? Pass type: Float64Array.
 
 // Header (firstBlock) u32 layout
-const BUCKET_POINTER_INDEX = 0;
+const BUCKET_STACK_POINTER_INDEX = 0;
 const ENTITY_POOL_POINTER_INDEX = 1;
 const SLOT_POOL_POINTER_INDEX = 2;
 const MAP_POINTER_INDEX = 3;
@@ -44,11 +45,16 @@ const BUCKET_COUNT_INDEX = 4;
 const TYPE_INDEX = 5;
 // config view starts at slot 6 (offset 24 bytes is 8-byte aligned, so a Float64 view is valid): [gridSize]
 const CONFIG_INDEX = 6;
+const TABLE_LOCK_INDEX = 8;
+const MAX_BUCKET_COUNT_INDEX = 10;
 
 // Per-bucket record: [lock, head]
 const BUCKET_LOCK_OFFSET = 0;
 const BUCKET_HEAD_OFFSET = 1;
 const BUCKET_SIZE = 2;
+const BUCKET_SEGMENT_SHIFT = 8;
+const BUCKETS_PER_SEGMENT = 1 << BUCKET_SEGMENT_SHIFT;
+const BUCKET_SEGMENT_MASK = BUCKETS_PER_SEGMENT - 1;
 
 // Slot record fields (one per entity-cell membership). The cell (col, row) is stored explicitly because a bucket mixes
 // slots from every cell that hashes to it, so a walk must filter to the cell it is looking at.
@@ -86,7 +92,9 @@ const HASH_PRIME_COL = 73856093;
 const HASH_PRIME_ROW = 19349663;
 
 const DEFAULT_GRID_SIZE = 50;
-const DEFAULT_BUCKET_COUNT = 8192;
+const DEFAULT_BUCKET_COUNT = 256;
+const BUCKET_LOAD_NUMERATOR = 1;
+const BUCKET_LOAD_DENOMINATOR = 2;
 const DEFAULT_MAX_ENTITIES = 1_000_000;
 // A spatial-map entity can span several cells, so the slot pool needs headroom over the entity count
 const DEFAULT_SLOTS_PER_ENTITY = 4;
@@ -96,29 +104,32 @@ type CoordArray = Float32Array | Float64Array;
 type CoordArrayConstructor = Float32ArrayConstructor | Float64ArrayConstructor;
 
 export default class SharedSpatialMap {
-	static readonly ALLOCATE_COUNT = 8;
+	static readonly ALLOCATE_COUNT = 11;
 
 	private memory: MemoryHeap;
 	private firstBlock: AllocatedMemory;
 	private entityPool: SharedPool<CoordArray>;
 	private slotPool: SharedPool<CoordArray>;
 	private idMap: SharedMap<number>;
+	private bucketPointers: SharedStack;
 
 	// Reused to hand a full record to pool.push without allocating a fresh array per operation (single writer per id)
 	private entityScratch: Array<number> = [0, 0, 0, 0, 0, 0, 0, 0];
 	private slotScratch: Array<number> = [0, 0, 0, 0, 0, 0, 0];
 
-	// Bucket block views over one contiguous region: Int32 for the per-bucket locks, Uint32 for the head indexes.
-	private bucketInts: Int32Array;
-	private bucketHeads: Uint32Array;
+	// Each cached page is viewed as Int32 for locks and Uint32 for head indexes. Both views cover the same bytes.
+	private bucketSegments: Array<Int32Array | undefined> = [];
+	private bucketHeadSegments: Array<Uint32Array | undefined> = [];
+	private tableLock: Int32Array;
 
 	private readonly coordType: number;
 	// Empty-bucket / end-of-list sentinel for this instance's element type (see FLOAT32_NULL_INDEX)
 	private readonly nullIndex: number;
-	private readonly bucketCount: number;
+	private bucketCount: number;
+	private readonly maxBucketCount: number;
 	// bucketCount-1 when bucketCount is a power of two, else -1. Lets bucketOf mask (hash & mask) instead of taking a
 	// variable integer modulo (hash % bucketCount) on the hot path - every insert/update/remove/query cell hashes a bucket.
-	private readonly bucketMask: number;
+	private bucketMask: number;
 	// Virtual cell size, read once (stored at the configured precision, math done in float64)
 	private readonly cellSize: number;
 
@@ -131,7 +142,10 @@ export default class SharedSpatialMap {
 		return this.cellSize;
 	}
 	get buckets(): number {
-		return this.bucketCount;
+		return Atomics.load(this.firstBlock.data, BUCKET_COUNT_INDEX);
+	}
+	get maxBuckets(): number {
+		return this.maxBucketCount;
 	}
 
 	// Element type the records are stored in (an ARRAY_TYPE code: float32 or float64)
@@ -145,6 +159,9 @@ export default class SharedSpatialMap {
 		if(config && 'firstBlock' in config) {
 			this.firstBlock = new AllocatedMemory(memory, config.firstBlock);
 			this.coordType = this.firstBlock.data[TYPE_INDEX];
+			this.bucketPointers = new SharedStack(memory, {
+				firstBlock: getPointer(loadRawPointer(this.firstBlock.data, BUCKET_STACK_POINTER_INDEX), memory.positionBits),
+			});
 			this.entityPool = new SharedPool<CoordArray>(memory, {
 				firstBlock: getPointer(loadRawPointer(this.firstBlock.data, ENTITY_POOL_POINTER_INDEX), memory.positionBits),
 			});
@@ -154,13 +171,18 @@ export default class SharedSpatialMap {
 			this.idMap = new SharedMap<number>(memory, {
 				firstBlock: getPointer(loadRawPointer(this.firstBlock.data, MAP_POINTER_INDEX), memory.positionBits),
 			});
-			this.bucketCount = this.firstBlock.data[BUCKET_COUNT_INDEX];
+			this.bucketCount = Atomics.load(this.firstBlock.data, BUCKET_COUNT_INDEX);
+			this.maxBucketCount = this.firstBlock.data[MAX_BUCKET_COUNT_INDEX];
 			this.nullIndex = nullIndexFor(this.coordType);
 		} else {
 			let gridSize = config?.gridSize ?? DEFAULT_GRID_SIZE;
-			this.bucketCount = Math.max(1, config?.buckets ?? DEFAULT_BUCKET_COUNT);
+			this.bucketCount = Math.min(0x40000000, Math.max(1, Math.floor(config?.buckets ?? DEFAULT_BUCKET_COUNT)));
 			let maxEntities = config?.maxEntities ?? DEFAULT_MAX_ENTITIES;
 			let maxSlots = config?.maxSlots ?? maxEntities * DEFAULT_SLOTS_PER_ENTITY;
+			this.maxBucketCount = Math.min(
+				0x40000000,
+				Math.max(this.bucketCount, Math.floor(config?.maxBuckets ?? nextPowerOfTwo(maxSlots * 2))),
+			);
 			this.coordType = getCoordTypeCode(config?.type);
 			this.nullIndex = nullIndexFor(this.coordType);
 
@@ -168,58 +190,58 @@ export default class SharedSpatialMap {
 				throw new Error(`Float32 SharedSpatialMap supports at most ${FLOAT32_LIMIT} entities and slots; pass type: Float64Array for more`);
 			}
 
-			// Inline the two pools' and the id-map's firstBlocks right after the header so the whole spine is one contiguous
-			// allocation. The bucket block stays separate: it is large and sized independently of these headers.
+			// Inline the bucket page pointers, pools, and id-map so the stable spine is one contiguous allocation.
 			let entityPoolConfig: SharedPoolConfig<CoordArray> = {
 				type: getCoordTypeConstructor(this.coordType),
 				dataLength: ENTITY_FIELDS,
 				maxLength: maxEntities,
+				maxChunkSize: getSpatialPoolChunkSize(maxEntities, ENTITY_FIELDS, getByteMultipler(this.coordType), memory.maxAllocationLength),
 			};
 			let slotPoolConfig: SharedPoolConfig<CoordArray> = {
 				type: getCoordTypeConstructor(this.coordType),
 				dataLength: SLOT_FIELDS,
 				maxLength: maxSlots,
+				maxChunkSize: getSpatialPoolChunkSize(maxSlots, SLOT_FIELDS, getByteMultipler(this.coordType), memory.maxAllocationLength),
 			};
 			let entityPoolAllocateCount = SharedPool.getAllocateCount(memory, entityPoolConfig);
 			let slotPoolAllocateCount = SharedPool.getAllocateCount(memory, slotPoolConfig);
 			let mapAllocateCount = SharedMap.ALLOCATE_COUNT;
-			this.firstBlock = memory.allocUI32(SharedSpatialMap.ALLOCATE_COUNT + entityPoolAllocateCount + slotPoolAllocateCount + mapAllocateCount);
+			let allocateCount = SharedSpatialMap.ALLOCATE_COUNT;
+			this.firstBlock = memory.allocUI32(allocateCount + entityPoolAllocateCount + slotPoolAllocateCount + mapAllocateCount);
 			this.firstBlock.data[BUCKET_COUNT_INDEX] = this.bucketCount;
 			this.firstBlock.data[TYPE_INDEX] = this.coordType;
+			this.firstBlock.data[MAX_BUCKET_COUNT_INDEX] = this.maxBucketCount;
 
 			let configView = this.getConfigView();
 			configView[0] = gridSize;
 
-			// Bucket block must fit one allocation - it is never resized. Every head starts as NULL (calloc leaves them 0, a
-			// valid slot index, so they must be initialized explicitly).
-			let bucketBlock = memory.allocUI32(this.bucketCount * BUCKET_SIZE);
-			let heads = new Uint32Array(bucketBlock.data.buffer, bucketBlock.bufferByteOffset, this.bucketCount * BUCKET_SIZE);
-			for(let i = 0; i < this.bucketCount; i++) {
-				heads[i * BUCKET_SIZE + BUCKET_HEAD_OFFSET] = this.nullIndex;
-			}
-			storeRawPointer(this.firstBlock.data, BUCKET_POINTER_INDEX, bucketBlock.pointer);
+			this.bucketPointers = new SharedStack(memory);
+			storeRawPointer(this.firstBlock.data, BUCKET_STACK_POINTER_INDEX, this.bucketPointers.pointer);
+			this.appendBucketSegments(this.bucketCount);
 
-			let entityPoolBlock = this.firstBlock.getSubAllocation(SharedSpatialMap.ALLOCATE_COUNT, entityPoolAllocateCount);
+			let entityPoolBlock = this.firstBlock.getSubAllocation(allocateCount, entityPoolAllocateCount);
 			this.entityPool = new SharedPool<CoordArray>(memory, { firstBlock: entityPoolBlock, ...entityPoolConfig });
 			storeRawPointer(this.firstBlock.data, ENTITY_POOL_POINTER_INDEX, entityPoolBlock.pointer);
 
-			let slotPoolBlock = this.firstBlock.getSubAllocation(SharedSpatialMap.ALLOCATE_COUNT + entityPoolAllocateCount, slotPoolAllocateCount);
+			let slotPoolBlock = this.firstBlock.getSubAllocation(allocateCount + entityPoolAllocateCount, slotPoolAllocateCount);
 			this.slotPool = new SharedPool<CoordArray>(memory, { firstBlock: slotPoolBlock, ...slotPoolConfig });
 			storeRawPointer(this.firstBlock.data, SLOT_POOL_POINTER_INDEX, slotPoolBlock.pointer);
 
-			let mapBlock = this.firstBlock.getSubAllocation(SharedSpatialMap.ALLOCATE_COUNT + entityPoolAllocateCount + slotPoolAllocateCount, mapAllocateCount);
-			this.idMap = new SharedMap<number>(memory, { firstBlock: mapBlock });
+			let mapBlock = this.firstBlock.getSubAllocation(allocateCount + entityPoolAllocateCount + slotPoolAllocateCount, mapAllocateCount);
+			this.idMap = new SharedMap<number>(memory, { firstBlock: mapBlock, capacity: getSpatialMapCapacity(maxEntities, memory.maxAllocationLength) });
 			storeRawPointer(this.firstBlock.data, MAP_POINTER_INDEX, mapBlock.pointer);
 		}
 
-		this.bucketMask = (this.bucketCount & (this.bucketCount - 1)) === 0 ? this.bucketCount - 1 : -1;
+		this.bucketMask = maskFor(this.bucketCount);
+		this.tableLock = new Int32Array(
+			this.firstBlock.data.buffer,
+			this.firstBlock.bufferByteOffset + TABLE_LOCK_INDEX * Uint32Array.BYTES_PER_ELEMENT,
+			2,
+		);
 
 		let configView = this.getConfigView();
 		this.cellSize = configView[0];
 
-		let bucketBlock = new AllocatedMemory(memory, getPointer(loadRawPointer(this.firstBlock.data, BUCKET_POINTER_INDEX), memory.positionBits));
-		this.bucketInts = new Int32Array(bucketBlock.data.buffer, bucketBlock.bufferByteOffset, this.bucketCount * BUCKET_SIZE);
-		this.bucketHeads = new Uint32Array(bucketBlock.data.buffer, bucketBlock.bufferByteOffset, this.bucketCount * BUCKET_SIZE);
 	}
 
 	get pointer(): number {
@@ -227,13 +249,90 @@ export default class SharedSpatialMap {
 	}
 
 	get usedMemory(): number {
-		let bucketBlock = new AllocatedMemory(this.memory, getPointer(loadRawPointer(this.firstBlock.data, BUCKET_POINTER_INDEX), this.memory.positionBits));
-		return this.firstBlock.usedMemory + bucketBlock.usedMemory + this.entityPool.usedMemory + this.slotPool.usedMemory + this.idMap.usedMemory;
+		let total = this.firstBlock.usedMemory + this.bucketPointers.usedMemory
+			+ this.entityPool.usedMemory + this.slotPool.usedMemory + this.idMap.usedMemory;
+		for(let pointer of this.bucketPointers) {
+			total += new AllocatedMemory(this.memory, getPointer(pointer, this.memory.positionBits)).usedMemory;
+		}
+		return total;
 	}
 
 	insert(id: number, x: number, y: number, width = 0, height = 0) {
+		readLock(this.tableLock);
+		try {
+			this.syncBucketCount();
+			this.insertLocked(id, x, y, width, height);
+		} finally {
+			readUnlock(this.tableLock);
+		}
+		this.growBucketsIfNeeded();
+	}
+
+	bulkInsert(entities: Iterable<SpatialEntity>) {
+		let byId = new Map<number, SpatialEntity>();
+		for(let entity of entities) {
+			byId.set(entity.id, entity);
+		}
+		let unique = Array.from(byId.values());
+		let existing = this.idMap.getAll(unique.map(entity => entity.id));
+		let mappings: Array<readonly [number, number]> = [];
+		let additionalSlots = 0;
+		let newCount = 0;
+		for(let i = 0; i < unique.length; i++) {
+			if(existing[i] === undefined) {
+				let entity = unique[i];
+				newCount++;
+				additionalSlots += (this.colOf(entity.x + (entity.width ?? 0)) - this.colOf(entity.x) + 1)
+					* (this.rowOf(entity.y + (entity.height ?? 0)) - this.rowOf(entity.y) + 1);
+			}
+		}
+		this.ensureBucketCapacity(this.slotPool.length + additionalSlots);
+		let nextEntityIndex = this.entityPool.reserveContiguous(newCount);
+		let nextSlotIndex = this.slotPool.reserveContiguous(additionalSlots);
+		readLock(this.tableLock);
+		try {
+			this.syncBucketCount();
+			for(let i = 0; i < unique.length; i++) {
+				let entity = unique[i];
+				let width = entity.width ?? 0;
+				let height = entity.height ?? 0;
+				if(existing[i] !== undefined) {
+					this.updateLocked(entity.id, entity.x, entity.y, width, height);
+					continue;
+				}
+
+				let minCol = this.colOf(entity.x);
+				let minRow = this.rowOf(entity.y);
+				let maxCol = this.colOf(entity.x + width);
+				let maxRow = this.rowOf(entity.y + height);
+				let entityIndex = nextEntityIndex++;
+				let block = this.entityPool.blockFor(entityIndex);
+				let offset = this.entityPool.blockOffset(entityIndex);
+				block[offset + ENTITY_MIN_COL] = minCol;
+				block[offset + ENTITY_MIN_ROW] = minRow;
+				block[offset + ENTITY_MAX_COL] = maxCol;
+				block[offset + ENTITY_MAX_ROW] = maxRow;
+				block[offset + ENTITY_X] = entity.x;
+				block[offset + ENTITY_Y] = entity.y;
+				block[offset + ENTITY_WIDTH] = width;
+				block[offset + ENTITY_HEIGHT] = height;
+				mappings.push([entity.id, entityIndex]);
+				for(let row = minRow; row <= maxRow; row++) {
+					for(let col = minCol; col <= maxCol; col++) {
+						this.linkReservedBucket(col, row, nextSlotIndex++, entity.id, entityIndex, minCol, minRow);
+					}
+				}
+			}
+			this.idMap.setAll(mappings);
+		} finally {
+			readUnlock(this.tableLock);
+		}
+		this.growBucketsForBulk();
+	}
+
+	private insertLocked(id: number, x: number, y: number, width: number, height: number) {
 		if(this.idMap.get(id) !== undefined) {
-			this.update(id, x, y, width, height);
+			this.updateLocked(id, x, y, width, height);
 			return;
 		}
 
@@ -261,8 +360,37 @@ export default class SharedSpatialMap {
 	// worker owns a disjoint set of entities), so this entity's record is stable until we lock its bucket(s).
 	update(id: number, x: number, y: number, width = 0, height = 0) {
 		let entityIndex = this.idMap.get(id);
+		if(entityIndex !== undefined) {
+			let block = this.entityPool.blockFor(entityIndex);
+			let off = this.entityPool.blockOffset(entityIndex);
+			let minCol = this.colOf(x);
+			let minRow = this.rowOf(y);
+			let maxCol = this.colOf(x + width);
+			let maxRow = this.rowOf(y + height);
+			if(minCol === block[off + ENTITY_MIN_COL] && minRow === block[off + ENTITY_MIN_ROW]
+				&& maxCol === block[off + ENTITY_MAX_COL] && maxRow === block[off + ENTITY_MAX_ROW]) {
+				block[off + ENTITY_X] = x;
+				block[off + ENTITY_Y] = y;
+				block[off + ENTITY_WIDTH] = width;
+				block[off + ENTITY_HEIGHT] = height;
+				return;
+			}
+		}
+
+		readLock(this.tableLock);
+		try {
+			this.syncBucketCount();
+			this.updateLocked(id, x, y, width, height);
+		} finally {
+			readUnlock(this.tableLock);
+		}
+		this.growBucketsIfNeeded();
+	}
+
+	private updateLocked(id: number, x: number, y: number, width: number, height: number) {
+		let entityIndex = this.idMap.get(id);
 		if(entityIndex === undefined) {
-			this.insert(id, x, y, width, height);
+			this.insertLocked(id, x, y, width, height);
 			return;
 		}
 
@@ -300,6 +428,16 @@ export default class SharedSpatialMap {
 	}
 
 	remove(id: number): boolean {
+		readLock(this.tableLock);
+		try {
+			this.syncBucketCount();
+			return this.removeLocked(id);
+		} finally {
+			readUnlock(this.tableLock);
+		}
+	}
+
+	private removeLocked(id: number): boolean {
 		let entityIndex = this.idMap.get(id);
 		if(entityIndex === undefined) {
 			return false;
@@ -327,23 +465,35 @@ export default class SharedSpatialMap {
 	}
 	// Same as search but appends into a caller-owned array so hot loops can reuse it. Returns the array.
 	searchInto(out: Array<number>, x: number, y: number, width: number, height: number, filter?: (id: number) => boolean): Array<number> {
+		readLock(this.tableLock);
+		try {
+			this.syncBucketCount();
+			return this.searchIntoLocked(out, x, y, width, height, filter);
+		} finally {
+			readUnlock(this.tableLock);
+		}
+	}
+
+	private searchIntoLocked(out: Array<number>, x: number, y: number, width: number, height: number, filter?: (id: number) => boolean): Array<number> {
 		let start = out.length;
 		let qMinCol = this.colOf(x);
 		let qMinRow = this.rowOf(y);
 		let qMaxCol = this.colOf(x + width);
 		let qMaxRow = this.rowOf(y + height);
 
-		let bucketHeads = this.bucketHeads;
 		let nullIndex = this.nullIndex;
 		for(let row = qMinRow; row <= qMaxRow; row++) {
 			for(let col = qMinCol; col <= qMaxCol; col++) {
 				let bucket = this.bucketOf(col, row);
+				let bucketInts = this.getBucketSegment(bucket);
 				// Inline the empty-bucket peek (the common case) so an empty bucket never pays for a method call - most cells in
 				// a typical query hash to empty buckets, so this skip dominates query cost.
-				if(bucketHeads[bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET] === nullIndex) {
+				let offset = this.bucketOffset(bucket);
+				let bucketHeads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
+				if(bucketHeads[offset + BUCKET_HEAD_OFFSET] === nullIndex) {
 					continue;
 				}
-				this.collectBucket(out, bucket, col, row, qMinCol, qMinRow);
+				this.collectBucket(out, bucketInts, bucketHeads, offset, col, row, qMinCol, qMinRow);
 			}
 		}
 		if(filter !== undefined) {
@@ -360,6 +510,16 @@ export default class SharedSpatialMap {
 	}
 
 	neighbors(x: number, y: number, maxResults: number, maxDistance: number, filter?: (id: number) => boolean): Array<number> {
+		readLock(this.tableLock);
+		try {
+			this.syncBucketCount();
+			return this.neighborsLocked(x, y, maxResults, maxDistance, filter);
+		} finally {
+			readUnlock(this.tableLock);
+		}
+	}
+
+	private neighborsLocked(x: number, y: number, maxResults: number, maxDistance: number, filter?: (id: number) => boolean): Array<number> {
 		if(maxResults <= 0 || maxDistance < 0 || Number.isNaN(maxResults) || Number.isNaN(maxDistance)) {
 			return [];
 		}
@@ -445,24 +605,35 @@ export default class SharedSpatialMap {
 	}
 
 	clear() {
-		for(let i = 0; i < this.bucketCount; i++) {
-			this.bucketHeads[i * BUCKET_SIZE + BUCKET_HEAD_OFFSET] = this.nullIndex;
-		}
-		this.entityPool.clear();
-		this.slotPool.clear();
-		// SharedMap has no clear(); drop every key. Not safe to run concurrently with writers (documented on clear()).
-		let keys: Array<number> = [];
-		for(let [key] of this.idMap) {
-			keys.push(key);
-		}
-		for(let key of keys) {
-			this.idMap.delete(key);
+		writeLock(this.tableLock);
+		try {
+			this.syncBucketCount();
+			for(let segmentIndex = 0; segmentIndex < this.bucketPointers.length; segmentIndex++) {
+				this.getBucketSegment(segmentIndex << BUCKET_SEGMENT_SHIFT);
+				let heads = this.bucketHeadSegments[segmentIndex]!;
+				for(let i = BUCKET_HEAD_OFFSET; i < heads.length; i += BUCKET_SIZE) {
+					heads[i] = this.nullIndex;
+				}
+			}
+			this.entityPool.clear();
+			this.slotPool.clear();
+			let keys: Array<number> = [];
+			for(let [key] of this.idMap) {
+				keys.push(key);
+			}
+			for(let key of keys) {
+				this.idMap.delete(key);
+			}
+		} finally {
+			writeUnlock(this.tableLock);
 		}
 	}
 
 	free() {
-		let bucketBlock = new AllocatedMemory(this.memory, getPointer(loadRawPointer(this.firstBlock.data, BUCKET_POINTER_INDEX), this.memory.positionBits));
-		bucketBlock.free();
+		for(let pointer of this.bucketPointers) {
+			new AllocatedMemory(this.memory, getPointer(pointer, this.memory.positionBits)).free();
+		}
+		this.bucketPointers.free();
 		this.entityPool.free();
 		this.slotPool.free();
 		this.idMap.free();
@@ -502,11 +673,122 @@ export default class SharedSpatialMap {
 		let distance = Math.min(left, right, top, bottom);
 		return distance * distance;
 	}
-	// Hash a virtual cell to one of the fixed buckets. col/row may be negative, so keep the mix unsigned before the modulo.
+	// Hash a virtual cell to the current bucket count. The table read lock keeps this count stable for the operation.
 	private bucketOf(col: number, row: number): number {
 		let hash = (Math.imul(col, HASH_PRIME_COL) ^ Math.imul(row, HASH_PRIME_ROW)) >>> 0;
 		let mask = this.bucketMask;
 		return mask >= 0 ? hash & mask : hash % this.bucketCount;
+	}
+
+	private bucketOffset(bucket: number): number {
+		return (bucket & BUCKET_SEGMENT_MASK) * BUCKET_SIZE;
+	}
+
+	private getBucketSegment(bucket: number): Int32Array {
+		let segmentIndex = bucket >>> BUCKET_SEGMENT_SHIFT;
+		let cached = this.bucketSegments[segmentIndex];
+		if(cached !== undefined) {
+			return cached;
+		}
+
+		let pointer = this.bucketPointers.at(segmentIndex);
+		let block = new AllocatedMemory(this.memory, getPointer(pointer, this.memory.positionBits));
+		let ints = new Int32Array(block.data.buffer, block.bufferByteOffset, block.data.length);
+		this.bucketHeadSegments[segmentIndex] = new Uint32Array(block.data.buffer, block.bufferByteOffset, block.data.length);
+		this.bucketSegments[segmentIndex] = ints;
+		return ints;
+	}
+
+	private appendBucketSegments(bucketCount: number) {
+		let needed = Math.ceil(bucketCount / BUCKETS_PER_SEGMENT);
+		while(this.bucketPointers.length < needed) {
+			let block = this.memory.allocUI32(BUCKETS_PER_SEGMENT * BUCKET_SIZE);
+			let heads = new Uint32Array(block.data.buffer, block.bufferByteOffset, block.data.length);
+			for(let i = BUCKET_HEAD_OFFSET; i < heads.length; i += BUCKET_SIZE) {
+				heads[i] = this.nullIndex;
+			}
+			this.bucketPointers.push(block.pointer);
+		}
+	}
+
+	private syncBucketCount() {
+		let bucketCount = Atomics.load(this.firstBlock.data, BUCKET_COUNT_INDEX);
+		if(bucketCount !== this.bucketCount) {
+			this.bucketCount = bucketCount;
+			this.bucketMask = maskFor(bucketCount);
+		}
+	}
+
+	private growBucketsIfNeeded() {
+		let bucketCount = Atomics.load(this.firstBlock.data, BUCKET_COUNT_INDEX);
+		if(bucketCount >= this.maxBucketCount
+			|| this.slotPool.length * BUCKET_LOAD_DENOMINATOR <= bucketCount * BUCKET_LOAD_NUMERATOR) {
+			return;
+		}
+
+		writeLock(this.tableLock);
+		try {
+			this.syncBucketCount();
+			if(this.slotPool.length * BUCKET_LOAD_DENOMINATOR <= this.bucketCount * BUCKET_LOAD_NUMERATOR) {
+				return;
+			}
+			let newBucketCount = Math.min(this.bucketCount * 2, this.maxBucketCount);
+			if(newBucketCount === this.bucketCount) {
+				return;
+			}
+			this.resizeBuckets(newBucketCount);
+		} finally {
+			writeUnlock(this.tableLock);
+		}
+	}
+
+	private ensureBucketCapacity(slotCount: number) {
+		let needed = Math.ceil(slotCount * BUCKET_LOAD_DENOMINATOR / BUCKET_LOAD_NUMERATOR);
+		let target = Math.min(nextPowerOfTwo(needed), this.maxBucketCount);
+		if(target <= Atomics.load(this.firstBlock.data, BUCKET_COUNT_INDEX)) {
+			return;
+		}
+		writeLock(this.tableLock);
+		try {
+			this.syncBucketCount();
+			if(target > this.bucketCount) {
+				this.resizeBuckets(target);
+			}
+		} finally {
+			writeUnlock(this.tableLock);
+		}
+	}
+
+	private resizeBuckets(newBucketCount: number) {
+		this.appendBucketSegments(newBucketCount);
+		for(let segmentIndex = 0; segmentIndex < this.bucketPointers.length; segmentIndex++) {
+			this.getBucketSegment(segmentIndex << BUCKET_SEGMENT_SHIFT);
+			let heads = this.bucketHeadSegments[segmentIndex]!;
+			for(let i = BUCKET_HEAD_OFFSET; i < heads.length; i += BUCKET_SIZE) {
+				heads[i] = this.nullIndex;
+			}
+		}
+
+		this.bucketCount = newBucketCount;
+		this.bucketMask = maskFor(newBucketCount);
+		for(let [slotIndex, slot] of this.slotPool.entries()) {
+			let bucket = this.bucketOf(slot[SLOT_COL], slot[SLOT_ROW]);
+			let heads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
+			let headIndex = this.bucketOffset(bucket) + BUCKET_HEAD_OFFSET;
+			slot[SLOT_NEXT] = heads[headIndex];
+			heads[headIndex] = slotIndex;
+		}
+		Atomics.store(this.firstBlock.data, BUCKET_COUNT_INDEX, newBucketCount);
+	}
+
+	private growBucketsForBulk() {
+		while(true) {
+			let before = Atomics.load(this.firstBlock.data, BUCKET_COUNT_INDEX);
+			this.growBucketsIfNeeded();
+			if(Atomics.load(this.firstBlock.data, BUCKET_COUNT_INDEX) === before) {
+				return;
+			}
+		}
 	}
 
 	// Push one slot into each cell of the rectangle, carrying the cell's own (col, row) and the entity's top-left cell as
@@ -532,14 +814,39 @@ export default class SharedSpatialMap {
 		slot[SLOT_COL] = col;
 		slot[SLOT_ROW] = row;
 		let pool = this.slotPool;
-		let bucketInts = this.bucketInts;
-		let bucketHeads = this.bucketHeads;
 		let slotIndex = pool.push(slot);
 		let bucket = this.bucketOf(col, row);
-		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
+		let bucketInts = this.getBucketSegment(bucket);
+		let bucketHeads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
+		let offset = this.bucketOffset(bucket);
+		let lockIndex = offset + BUCKET_LOCK_OFFSET;
 		lock(bucketInts, lockIndex);
-		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
+		let headIndex = offset + BUCKET_HEAD_OFFSET;
 		pool.set(slotIndex, SLOT_NEXT, bucketHeads[headIndex]);
+		bucketHeads[headIndex] = slotIndex;
+		unlock(bucketInts, lockIndex);
+	}
+
+	private linkReservedBucket(
+		col: number, row: number, slotIndex: number, id: number, entityIndex: number, anchorCol: number, anchorRow: number,
+	) {
+		let pool = this.slotPool;
+		let block = pool.blockFor(slotIndex);
+		let slotOffset = pool.blockOffset(slotIndex);
+		block[slotOffset + SLOT_ID] = id;
+		block[slotOffset + SLOT_COL] = col;
+		block[slotOffset + SLOT_ROW] = row;
+		block[slotOffset + SLOT_ANCHOR_COL] = anchorCol;
+		block[slotOffset + SLOT_ANCHOR_ROW] = anchorRow;
+		block[slotOffset + SLOT_ENTITY_INDEX] = entityIndex;
+		let bucket = this.bucketOf(col, row);
+		let bucketInts = this.getBucketSegment(bucket);
+		let bucketHeads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
+		let offset = this.bucketOffset(bucket);
+		let lockIndex = offset + BUCKET_LOCK_OFFSET;
+		lock(bucketInts, lockIndex);
+		let headIndex = offset + BUCKET_HEAD_OFFSET;
+		block[slotOffset + SLOT_NEXT] = bucketHeads[headIndex];
 		bucketHeads[headIndex] = slotIndex;
 		unlock(bucketInts, lockIndex);
 	}
@@ -593,11 +900,13 @@ export default class SharedSpatialMap {
 	// Refresh the anchor on this entity's slot already linked for cell (col, row) (single writer per id, so it is present).
 	private refreshAnchorInBucket(bucket: number, id: number, col: number, row: number, anchorCol: number, anchorRow: number) {
 		let nullIndex = this.nullIndex;
-		let bucketInts = this.bucketInts;
-		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
+		let bucketInts = this.getBucketSegment(bucket);
+		let offset = this.bucketOffset(bucket);
+		let lockIndex = offset + BUCKET_LOCK_OFFSET;
 		lock(bucketInts, lockIndex);
 		let pool = this.slotPool;
-		let index = this.bucketHeads[bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET];
+		let bucketHeads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
+		let index = bucketHeads[offset + BUCKET_HEAD_OFFSET];
 		while(index !== nullIndex) {
 			let block = pool.blockFor(index);
 			let off = pool.blockOffset(index);
@@ -628,13 +937,15 @@ export default class SharedSpatialMap {
 	// Caller has already peeked the head unlocked and skipped empty buckets (an empty bucket has nothing to read, so the
 	// lock and its atomics would be pure overhead). Taking the lock only to walk a non-empty bucket preserves the snapshot
 	// guarantee - a concurrent insert we race is simply not in this snapshot.
-	private collectBucket(out: Array<number>, bucket: number, col: number, row: number, qMinCol: number, qMinRow: number) {
+	private collectBucket(
+		out: Array<number>, bucketInts: Int32Array, bucketHeads: Uint32Array, offset: number,
+		col: number, row: number, qMinCol: number, qMinRow: number,
+	) {
 		let nullIndex = this.nullIndex;
-		let bucketInts = this.bucketInts;
-		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
-		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
+		let headIndex = offset + BUCKET_HEAD_OFFSET;
+		let lockIndex = offset + BUCKET_LOCK_OFFSET;
 		lock(bucketInts, lockIndex);
-		let index = this.bucketHeads[headIndex];
+		let index = bucketHeads[headIndex];
 		let pool = this.slotPool;
 		while(index !== nullIndex) {
 			// One chunk resolve per slot covers every field it reads
@@ -658,13 +969,16 @@ export default class SharedSpatialMap {
 
 	private collectNeighborBucket(out: Array<number>, col: number, row: number) {
 		let bucket = this.bucketOf(col, row);
-		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
-		if(this.bucketHeads[headIndex] === this.nullIndex) {
+		let bucketInts = this.getBucketSegment(bucket);
+		let bucketHeads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
+		let offset = this.bucketOffset(bucket);
+		let headIndex = offset + BUCKET_HEAD_OFFSET;
+		if(bucketHeads[headIndex] === this.nullIndex) {
 			return;
 		}
-		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
-		lock(this.bucketInts, lockIndex);
-		let index = this.bucketHeads[headIndex];
+		let lockIndex = offset + BUCKET_LOCK_OFFSET;
+		lock(bucketInts, lockIndex);
+		let index = bucketHeads[headIndex];
 		while(index !== this.nullIndex) {
 			let block = this.slotPool.blockFor(index);
 			let off = this.slotPool.blockOffset(index);
@@ -673,20 +987,23 @@ export default class SharedSpatialMap {
 			}
 			index = block[off + SLOT_NEXT];
 		}
-		unlock(this.bucketInts, lockIndex);
+		unlock(bucketInts, lockIndex);
 	}
 
 	private collectNearestBucket(
 		nearest: NearestNeighbor, col: number, row: number, x: number, y: number,
 	) {
 		let bucket = this.bucketOf(col, row);
-		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
-		if(this.bucketHeads[headIndex] === this.nullIndex) {
+		let bucketInts = this.getBucketSegment(bucket);
+		let bucketHeads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
+		let offset = this.bucketOffset(bucket);
+		let headIndex = offset + BUCKET_HEAD_OFFSET;
+		if(bucketHeads[headIndex] === this.nullIndex) {
 			return;
 		}
-		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
-		lock(this.bucketInts, lockIndex);
-		let index = this.bucketHeads[headIndex];
+		let lockIndex = offset + BUCKET_LOCK_OFFSET;
+		lock(bucketInts, lockIndex);
+		let index = bucketHeads[headIndex];
 		while(index !== this.nullIndex) {
 			let slot = this.slotPool.blockFor(index);
 			let off = this.slotPool.blockOffset(index);
@@ -704,7 +1021,7 @@ export default class SharedSpatialMap {
 			}
 			index = slot[off + SLOT_NEXT];
 		}
-		unlock(this.bucketInts, lockIndex);
+		unlock(bucketInts, lockIndex);
 	}
 
 	private collectNeighborCandidates(
@@ -712,13 +1029,16 @@ export default class SharedSpatialMap {
 		x: number, y: number, maxResults: number, maxDistanceSquared: number,
 	) {
 		let bucket = this.bucketOf(col, row);
-		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
-		if(this.bucketHeads[headIndex] === this.nullIndex) {
+		let bucketInts = this.getBucketSegment(bucket);
+		let bucketHeads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
+		let offset = this.bucketOffset(bucket);
+		let headIndex = offset + BUCKET_HEAD_OFFSET;
+		if(bucketHeads[headIndex] === this.nullIndex) {
 			return;
 		}
-		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
-		lock(this.bucketInts, lockIndex);
-		let index = this.bucketHeads[headIndex];
+		let lockIndex = offset + BUCKET_LOCK_OFFSET;
+		lock(bucketInts, lockIndex);
+		let index = bucketHeads[headIndex];
 		while(index !== this.nullIndex) {
 			let slot = this.slotPool.blockFor(index);
 			let off = this.slotPool.blockOffset(index);
@@ -741,7 +1061,7 @@ export default class SharedSpatialMap {
 			}
 			index = slot[off + SLOT_NEXT];
 		}
-		unlock(this.bucketInts, lockIndex);
+		unlock(bucketInts, lockIndex);
 	}
 
 	private addEntityCandidate(candidates: Array<NeighborCandidate>, id: number, entityIndex: number, x: number, y: number, maxResults: number, maxDistanceSquared: number) {
@@ -769,11 +1089,12 @@ export default class SharedSpatialMap {
 	// Matching on id and cell is required: two of an entity's own cells can hash to the same bucket, so id alone is ambiguous.
 	private unlinkFromBucket(bucket: number, id: number, col: number, row: number): number {
 		let nullIndex = this.nullIndex;
-		let bucketInts = this.bucketInts;
-		let bucketHeads = this.bucketHeads;
-		let lockIndex = bucket * BUCKET_SIZE + BUCKET_LOCK_OFFSET;
+		let bucketInts = this.getBucketSegment(bucket);
+		let bucketHeads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
+		let offset = this.bucketOffset(bucket);
+		let lockIndex = offset + BUCKET_LOCK_OFFSET;
 		lock(bucketInts, lockIndex);
-		let headIndex = bucket * BUCKET_SIZE + BUCKET_HEAD_OFFSET;
+		let headIndex = offset + BUCKET_HEAD_OFFSET;
 		let pool = this.slotPool;
 
 		let prev = nullIndex;
@@ -814,10 +1135,17 @@ function getCoordTypeConstructor(typeCode: number): CoordArrayConstructor {
 function nullIndexFor(typeCode: number): number {
 	return typeCode === ARRAY_TYPE.float32 ? FLOAT32_NULL_INDEX : FLOAT64_NULL_INDEX;
 }
+function maskFor(bucketCount: number): number {
+	return (bucketCount & (bucketCount - 1)) === 0 ? bucketCount - 1 : -1;
+}
+function nextPowerOfTwo(value: number): number {
+	return Math.pow(2, Math.ceil(Math.log2(Math.max(1, value))));
+}
 
 interface SharedSpatialMapConfig {
 	gridSize?: number
 	buckets?: number
+	maxBuckets?: number
 	maxEntities?: number
 	maxSlots?: number
 	type?: CoordArrayConstructor
@@ -826,4 +1154,4 @@ interface SharedSpatialMapMemory {
 	firstBlock: SharedAllocatedMemory
 }
 
-export type { SharedSpatialMapConfig, SharedSpatialMapMemory };
+export type { SharedSpatialMapConfig, SharedSpatialMapMemory, SpatialEntity };

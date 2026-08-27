@@ -3,11 +3,11 @@ import SharedSpatialMap from '../shared-spatial-map';
 import { SAFETY_TEST_OPTIONS, cleanupWorkerBundles, terminateTestWorkers } from '../../__tests__/helpers/worker-threads';
 import { bundleSpatialWorker, expectedSpatialResult, runSpatialSafety } from './helpers/spatial-safety';
 
-const WORKER_COUNT = 8;
+const WORKER_COUNT = 20;
 const INSERT_PER_WORKER = 1_500;
 const UPDATE_ROUNDS = 6;
 const GRID_SIZE = 50;
-const BUCKET_COUNT = 8192;
+const INITIAL_BUCKET_COUNT = 256;
 
 describe('SharedSpatialMap thread safety', () => {
 	let workerFile: string;
@@ -18,15 +18,14 @@ describe('SharedSpatialMap thread safety', () => {
 	afterEach(() => terminateTestWorkers());
 	afterAll(() => cleanupWorkerBundles());
 
-	// Unlike the grid this world has no fixed extent - cells are hashed into a fixed bucket array, so distinct cells
-	// share buckets and the id+cell disambiguation gets exercised too.
+	// Concurrent inserts force several exclusive rehashes while other workers update, remove, and query.
 	it('stays consistent while several threads insert, update and remove at once', SAFETY_TEST_OPTIONS, async () => {
 		// Pre-size the heap so every pool chunk / map table allocation lands in a buffer all workers already hold, and
 		// disable auto-grow: cross-thread buffer growth can't be propagated safely mid-run.
 		let heap = new MemoryHeap({ initialBuffers: 24, autoGrowSize: 0 });
 		let map = new SharedSpatialMap(heap, {
 			gridSize: GRID_SIZE,
-			buckets: BUCKET_COUNT,
+			buckets: INITIAL_BUCKET_COUNT,
 			maxEntities: WORKER_COUNT * INSERT_PER_WORKER,
 		});
 
@@ -43,5 +42,6 @@ describe('SharedSpatialMap thread safety', () => {
 			WORKER_COUNT * INSERT_PER_WORKER,
 			WORKER_COUNT * UPDATE_ROUNDS,
 		));
+		expect(map.buckets).toBeGreaterThan(8_192);
 	});
 });

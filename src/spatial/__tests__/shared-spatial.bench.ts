@@ -6,10 +6,9 @@ import SharedQuadtree from '../shared-quadtree';
 import SharedSpatialGrid from '../shared-spatial-grid';
 import SharedSpatialMap from '../shared-spatial-map';
 
-// SharedQuadtree, SharedSpatialGrid, and SharedSpatialMap are fixed-shape structures meant for live multi-thread updates;
-// quadtree-ts supports single-threaded updates, while Flatbush is static. SharedSpatialMap is the grid's unbounded cousin: it
-// hashes cells into a fixed bucket array instead of a fixed cols x rows extent, so it pays a hash + chain filter per cell
-// in exchange for supporting a world of any size. The comparison covers building, broad-phase queries, and moving entities.
+// SharedQuadtree and SharedSpatialGrid have fixed shapes; SharedSpatialMap grows and rehashes as it fills. quadtree-ts
+// supports single-threaded updates, while Flatbush is static. The comparison covers building, broad-phase queries, nearest
+// neighbors, and moving entities.
 
 const WORLD = { x: 0, y: 0, width: 4000, height: 4000 };
 const MAX_LEVELS = 6;
@@ -72,6 +71,11 @@ function buildShared(): SharedQuadtree {
 	}
 	return tree;
 }
+function buildSharedBulk(): SharedQuadtree {
+	let tree = new SharedQuadtree(new MemoryHeap(), { bounds: WORLD, maxLevels: MAX_LEVELS, maxEntities: ENTITY_COUNT });
+	tree.bulkInsert(entities);
+	return tree;
+}
 function buildQuadtreeTs(): QuadtreeTs<Rectangle<number>> {
 	let tree = new QuadtreeTs<Rectangle<number>>({ x: WORLD.x, y: WORLD.y, width: WORLD.width, height: WORLD.height, maxObjects: 10, maxLevels: MAX_LEVELS });
 	for(let rect of entityRects) {
@@ -86,12 +90,21 @@ function buildGrid(): SharedSpatialGrid {
 	}
 	return grid;
 }
+function buildGridBulk(): SharedSpatialGrid {
+	let grid = new SharedSpatialGrid(new MemoryHeap(), { bounds: WORLD, gridSize: GRID_SIZE, maxEntities: ENTITY_COUNT });
+	grid.bulkInsert(entities);
+	return grid;
+}
 function buildSpatialMap(): SharedSpatialMap {
-	// Roughly one bucket per occupied cell so chains stay short, matching the grid's resolution over this world
-	let map = new SharedSpatialMap(new MemoryHeap(), { gridSize: GRID_SIZE, buckets: 8192, maxEntities: ENTITY_COUNT });
+	let map = new SharedSpatialMap(new MemoryHeap(), { gridSize: GRID_SIZE, maxEntities: ENTITY_COUNT });
 	for(let entity of entities) {
 		map.insert(entity.id, entity.x, entity.y, entity.width, entity.height);
 	}
+	return map;
+}
+function buildSpatialMapBulk(): SharedSpatialMap {
+	let map = new SharedSpatialMap(new MemoryHeap(), { gridSize: GRID_SIZE, maxEntities: ENTITY_COUNT });
+	map.bulkInsert(entities);
 	return map;
 }
 function buildFlatbush(movedEntityCount = 0): Flatbush {
@@ -105,7 +118,7 @@ function buildFlatbush(movedEntityCount = 0): Flatbush {
 	return index;
 }
 
-describe(`build a tree of ${ENTITY_COUNT} entities`, () => {
+describe(`insert ${ENTITY_COUNT} entities individually`, () => {
 	bench('shared quadtree', () => {
 		buildShared();
 	});
@@ -114,6 +127,24 @@ describe(`build a tree of ${ENTITY_COUNT} entities`, () => {
 	});
 	bench('shared spatial map', () => {
 		buildSpatialMap();
+	});
+	bench('quadtree-ts', () => {
+		buildQuadtreeTs();
+	});
+	bench('flatbush', () => {
+		buildFlatbush();
+	});
+});
+
+describe(`bulk insert ${ENTITY_COUNT} entities`, () => {
+	bench('shared quadtree', () => {
+		buildSharedBulk();
+	});
+	bench('shared spatial grid', () => {
+		buildGridBulk();
+	});
+	bench('shared spatial map', () => {
+		buildSpatialMapBulk();
 	});
 	bench('quadtree-ts', () => {
 		buildQuadtreeTs();

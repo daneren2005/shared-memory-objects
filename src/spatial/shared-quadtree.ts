@@ -10,6 +10,7 @@ import {
 	MinPriorityQueue, addCandidate, candidateLimit, distanceSquaredToRect,
 	type NeighborCandidate, type NearestNeighbor,
 } from './spatial-neighbors';
+import { getSpatialMapCapacity, getSpatialPoolChunkSize, type SpatialEntity } from './spatial-entity';
 
 // Fixed-depth region quadtree ("implicit" / hierarchical grid) built for concurrent updates from many threads. Dynamic
 // subdivision is deliberately avoided: creating/redistributing/freeing nodes at runtime races with readers mid-traversal
@@ -144,6 +145,7 @@ export default class SharedQuadtree {
 				type: getCoordTypeConstructor(this.coordType),
 				dataLength: ITEM_FIELDS,
 				maxLength: maxEntities,
+				maxChunkSize: getSpatialPoolChunkSize(maxEntities, ITEM_FIELDS, getByteMultipler(this.coordType), memory.maxAllocationLength),
 			};
 			let poolAllocateCount = SharedPool.getAllocateCount(memory, poolConfig);
 			let mapAllocateCount = SharedMap.ALLOCATE_COUNT;
@@ -172,7 +174,7 @@ export default class SharedQuadtree {
 			storeRawPointer(this.firstBlock.data, POOL_POINTER_INDEX, poolBlock.pointer);
 
 			let mapBlock = this.firstBlock.getSubAllocation(SharedQuadtree.ALLOCATE_COUNT + poolAllocateCount, mapAllocateCount);
-			this.idMap = new SharedMap<number>(memory, { firstBlock: mapBlock });
+			this.idMap = new SharedMap<number>(memory, { firstBlock: mapBlock, capacity: getSpatialMapCapacity(maxEntities, memory.maxAllocationLength) });
 			storeRawPointer(this.firstBlock.data, MAP_POINTER_INDEX, mapBlock.pointer);
 		}
 
@@ -219,6 +221,42 @@ export default class SharedQuadtree {
 		let index = this.pool.push(record);
 		this.linkIntoNode(node, index);
 		this.idMap.set(id, index);
+	}
+
+	bulkInsert(entities: Iterable<SpatialEntity>) {
+		let byId = new Map<number, SpatialEntity>();
+		for(let entity of entities) {
+			byId.set(entity.id, entity);
+		}
+		let unique = Array.from(byId.values());
+		let existing = this.idMap.getAll(unique.map(entity => entity.id));
+		let mappings: Array<readonly [number, number]> = [];
+		let newCount = existing.reduce<number>((count, index) => count + (index === undefined ? 1 : 0), 0);
+		let nextIndex = this.pool.reserveContiguous(newCount);
+		for(let i = 0; i < unique.length; i++) {
+			let entity = unique[i];
+			let width = entity.width ?? 0;
+			let height = entity.height ?? 0;
+			if(existing[i] !== undefined) {
+				this.update(entity.id, entity.x, entity.y, width, height);
+				continue;
+			}
+
+			let node = this.locate(entity.x, entity.y, width, height);
+			let index = nextIndex++;
+			let block = this.pool.blockFor(index);
+			let offset = this.pool.blockOffset(index);
+			block[offset + ITEM_ID] = entity.id;
+			block[offset + ITEM_X] = entity.x;
+			block[offset + ITEM_Y] = entity.y;
+			block[offset + ITEM_W] = width;
+			block[offset + ITEM_H] = height;
+			block[offset + ITEM_NODE] = node;
+			block[offset + ITEM_NEXT] = this.nullIndex;
+			this.linkIntoNode(node, index);
+			mappings.push([entity.id, index]);
+		}
+		this.idMap.setAll(mappings);
 	}
 
 	// Move an entity to a new position. Assumes a single writer per entity id (the standard shared-memory pattern - each
@@ -705,4 +743,4 @@ interface SharedQuadtreeMemory {
 	firstBlock: SharedAllocatedMemory
 }
 
-export type { SharedQuadtreeConfig, SharedQuadtreeMemory, QuadtreeBounds };
+export type { SharedQuadtreeConfig, SharedQuadtreeMemory, QuadtreeBounds, SpatialEntity };

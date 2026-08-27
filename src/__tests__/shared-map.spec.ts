@@ -61,6 +61,16 @@ describe('SharedMap', () => {
 			expect(map.get('ore')).toEqual(0);
 		});
 
+		it('sets and gets batches with one capacity growth', () => {
+			let map = new SharedMap<string>(memory);
+			let entries: Array<readonly [string, number]> = Array.from({ length: 100 }, (_, i) => [`key-${i}`, i]);
+			map.setAll(entries);
+
+			expect(map.length).toEqual(100);
+			expect(map.capacity).toEqual(256);
+			expect(map.getAll(['key-2', 'missing', 'key-99'])).toEqual([2, undefined, 99]);
+		});
+
 		it('free', () => {
 			let startMemory = memory.currentUsed;
 			let map = new SharedMap<string>(memory);
