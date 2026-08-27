@@ -2,6 +2,14 @@ import MemoryHeap from '../memory-heap';
 
 const START_BYTE = 64;
 describe('AllocatedMemory', () => {
+	it('restores bounded allocation and slice views', () => {
+		let heap = new MemoryHeap({ bufferSize: 1024 * 16 });
+		let memory = heap.allocUI32(5);
+
+		expect(heap.getSharedAlloc(memory.getSharedMemory())!.data.length).toEqual(5);
+		expect(heap.getSharedAlloc(memory.getArrayMemory(1, 2))!.data.length).toEqual(2);
+	});
+
 	describe('getArray', () => {
 		it('Int32Array', () => {
 			let heap = new MemoryHeap({ bufferSize: 1024 * 16 });

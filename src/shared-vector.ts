@@ -64,7 +64,10 @@ export default class SharedVector<T extends NumericArray = Uint32Array> implemen
 		this.memory = memory;
 
 		if(config && 'firstBlock' in config) {
-			this.firstBlock = new AllocatedMemory(memory, config.firstBlock);
+			this.firstBlock = new AllocatedMemory(memory, {
+				length: SharedVector.ALLOCATE_COUNT,
+				...config.firstBlock,
+			});
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
 
 			// Pre-allocating memory and setting up in specific memory location

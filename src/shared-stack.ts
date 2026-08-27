@@ -165,7 +165,19 @@ export default class SharedStack<T extends NumericArray = Uint32Array> implement
 		if(config && 'firstBlock' in config) {
 			// An AllocatedMemory instance is a caller-reserved slice (e.g. inlined in SharedPool); a plain pointer is the
 			// serialized clone path. Taking the instance directly keeps us off the pointer-resolving construction branch.
-			this.firstBlock = config.firstBlock instanceof AllocatedMemory ? config.firstBlock : new AllocatedMemory(memory, config.firstBlock);
+			if(config.firstBlock instanceof AllocatedMemory) {
+				this.firstBlock = config.firstBlock;
+			} else {
+				const maxSegments = new Uint32Array(
+					memory.buffers[config.firstBlock.bufferPosition].buf,
+					config.firstBlock.bufferByteOffset + MAX_SEGMENTS_INDEX * Uint32Array.BYTES_PER_ELEMENT,
+					1,
+				)[0];
+				this.firstBlock = new AllocatedMemory(memory, {
+					length: SharedStack.BASE_ALLOCATE_COUNT + maxSegments,
+					...config.firstBlock,
+				});
+			}
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
 
 			// Memory passed together with config means the caller reserved the firstBlock slot for us to initialize in place

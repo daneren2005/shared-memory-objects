@@ -124,7 +124,7 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 				this.initialize(config);
 				this.ownsFirstBlock = false;
 			} else {
-				this.pointerMemory = new AllocatedMemory(memory, config.firstBlock);
+				this.pointerMemory = new AllocatedMemory(memory, { length: SharedMap.ALLOCATE_COUNT, ...config.firstBlock });
 			}
 		} else {
 			this.pointerMemory = memory.allocUI32(SharedMap.ALLOCATE_COUNT);

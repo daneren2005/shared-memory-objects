@@ -133,6 +133,7 @@ describe('SharedStack', () => {
 			firstBlock: {
 				bufferPosition: hostBlock.bufferPosition,
 				bufferByteOffset: hostBlock.bufferByteOffset + SharedStack.DEFAULT_ALLOCATE_COUNT * Uint32Array.BYTES_PER_ELEMENT,
+				length: SharedStack.DEFAULT_ALLOCATE_COUNT,
 			},
 		});
 

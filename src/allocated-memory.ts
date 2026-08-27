@@ -22,7 +22,7 @@ export default class AllocatedMemory {
 		return this.buffer.bytesFor(this.data.byteOffset) ?? 0;
 	}
 
-	constructor(memory: MemoryHeap, config: AllocatedMemoryConfig | SharedAllocatedMemory) {
+	constructor(memory: MemoryHeap, config: AllocatedMemoryConfig | SharedAllocatedMemory | AllocatedMemoryPointer) {
 		this.memory = memory;
 
 		if('buffer' in config) {
@@ -33,12 +33,10 @@ export default class AllocatedMemory {
 			this.bufferPosition = config.bufferPosition;
 			this.buffer = memory.buffers[config.bufferPosition];
 
-			// Making sure these are the correct size is slow but in dev we want to make sure we aren't allowing to go out of bounds
-			if(import.meta.env.MODE === 'production') {
-				this.data = new Uint32Array(this.buffer.buf, config.bufferByteOffset);
-			} else {
-				this.data = new Uint32Array(this.buffer.buf, config.bufferByteOffset, this.buffer.lengthOf(config.bufferByteOffset));
-			}
+			const length = 'length' in config
+				? config.length
+				: this.buffer.allocationLengthAt(config.bufferByteOffset);
+			this.data = new Uint32Array(this.buffer.buf, config.bufferByteOffset, length);
 		}
 	}
 
@@ -77,6 +75,7 @@ export default class AllocatedMemory {
 		return {
 			bufferPosition: this.bufferPosition,
 			bufferByteOffset: this.bufferByteOffset + offset * this.data.BYTES_PER_ELEMENT,
+			length,
 		};
 	}
 
@@ -89,6 +88,7 @@ export default class AllocatedMemory {
 		return {
 			bufferPosition: this.bufferPosition,
 			bufferByteOffset: this.bufferByteOffset,
+			length: this.data.length,
 		};
 	}
 }
@@ -101,5 +101,10 @@ interface AllocatedMemoryConfig {
 interface SharedAllocatedMemory {
 	bufferPosition: number
 	bufferByteOffset: number
+	length?: number
 }
-export type { SharedAllocatedMemory };
+interface AllocatedMemoryPointer {
+	bufferPosition: number
+	bufferByteOffset: number
+}
+export type { AllocatedMemoryPointer, SharedAllocatedMemory };

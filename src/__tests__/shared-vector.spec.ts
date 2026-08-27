@@ -203,6 +203,7 @@ describe('SharedVector', () => {
 			firstBlock: {
 				bufferPosition: hostBlock.bufferPosition,
 				bufferByteOffset: hostBlock.bufferByteOffset + SharedVector.ALLOCATE_COUNT * Uint32Array.BYTES_PER_ELEMENT,
+				length: SharedVector.ALLOCATE_COUNT,
 			},
 		});
 

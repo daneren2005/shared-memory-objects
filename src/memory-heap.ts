@@ -1,4 +1,4 @@
-import AllocatedMemory, { type SharedAllocatedMemory } from './allocated-memory';
+import AllocatedMemory, { type AllocatedMemoryPointer, type SharedAllocatedMemory } from './allocated-memory';
 import { MAX_BYTE_OFFSET_LENGTH, positionBitsForBufferSize } from './utils/pointer';
 import MemoryBuffer, { SIZEOF_MEM_BLOCK, SIZEOF_STATE } from './memory-buffer';
 
@@ -44,7 +44,7 @@ export default class MemoryHeap {
 			this.memory = new AllocatedMemory(this, {
 				bufferPosition: 0,
 				bufferByteOffset: 40,
-			});
+			} satisfies AllocatedMemoryPointer);
 			this.positionBits = this.memory.data[BUFFER_POSITION_BITS_INDEX];
 			this.isClone = true;
 		} else {

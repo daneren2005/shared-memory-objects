@@ -298,6 +298,9 @@ export default class MemoryBuffer {
 			return undefined;
 		}
 	}
+	allocationLengthAt(dataAddress: number): number {
+		return (this.blockSize(blockSelfAddress(dataAddress)) - SIZEOF_MEM_BLOCK) / this.u32.BYTES_PER_ELEMENT;
+	}
 
 	free(ptrOrArray: number | TypedArray) {
 		let addr: number;

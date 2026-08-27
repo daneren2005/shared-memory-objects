@@ -107,7 +107,9 @@ export default class SharedPool<T extends NumericArray = Uint32Array> implements
 		if(config && 'firstBlock' in config) {
 			// An AllocatedMemory instance is a caller-reserved slice (e.g. inlined in SharedQuadtree); a plain pointer is the
 			// serialized clone path. Taking the instance directly keeps us off the pointer-resolving construction branch.
-			this.firstBlock = config.firstBlock instanceof AllocatedMemory ? config.firstBlock : new AllocatedMemory(memory, config.firstBlock);
+			this.firstBlock = config.firstBlock instanceof AllocatedMemory
+				? config.firstBlock
+				: new AllocatedMemory(memory, { length: SharedPool.ALLOCATE_COUNT, ...config.firstBlock });
 			this.uint16Array = new Uint16Array(this.firstBlock.data.buffer, this.firstBlock.bufferByteOffset + TYPE_INDEX * Uint32Array.BYTES_PER_ELEMENT, 2);
 
 			// Memory passed together with config means the caller reserved the firstBlock slot for us to initialize in place
