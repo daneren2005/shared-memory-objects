@@ -291,4 +291,16 @@ describe('SharedMap', () => {
 			expect(map.usedMemory).toBeGreaterThan(before);
 		});
 	});
+
+	it('throws an actionable error instead of a cryptic allocator failure when the table cannot fit a buffer', () => {
+		let heap = new MemoryHeap({ bufferSize: 1024 * 1024, autoGrowSize: 0 });
+		let map = new SharedMap<number>(heap, { capacity: 16 });
+
+		let entryCeiling = Math.floor(heap.maxAllocationLength / 3 * 3 / 4);
+		expect(() => {
+			for(let id = 0; id < entryCeiling + 100_000; id++) {
+				map.set(id, id);
+			}
+		}).toThrow(/exceed the largest contiguous allocation/);
+	});
 });

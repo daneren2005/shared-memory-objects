@@ -390,6 +390,14 @@ export default class SharedMap<K extends string | number, V extends NumericArray
 		if(requestedCapacity === undefined && (length + 1) * LOAD_DENOMINATOR > oldCapacity * LOAD_NUMERATOR) {
 			newCapacity = oldCapacity * 2;
 		}
+		// A table is one contiguous allocation, so it can never exceed what a single buffer can hand out. Fail here with an
+		// actionable message instead of letting allocUI32 throw a cryptic "Unable to allocate N numbers" from deep inside the
+		// heap. Mirrors the same guard in initialize().
+		if(this.tableLength(newCapacity) > this.memory.maxAllocationLength) {
+			let maxEntries = Math.floor(this.memory.maxAllocationLength / (2 + this.cachedValueUnits) * LOAD_NUMERATOR / LOAD_DENOMINATOR);
+			throw new Error(`SharedMap can't grow to capacity ${newCapacity}: its table would exceed the largest contiguous `
+				+ `allocation (${this.memory.maxAllocationLength} u32s, ~${maxEntries} entries). Use larger buffers or shard across multiple maps.`);
+		}
 		let newTable = this.memory.allocUI32(this.tableLength(newCapacity));
 		let newSlots = newTable.data;
 		let newValues = this.makeValuesView(newTable, newCapacity) as NumericArrayIO;

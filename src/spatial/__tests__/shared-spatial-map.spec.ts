@@ -556,3 +556,34 @@ describe('SharedSpatialMap', () => {
 		});
 	});
 });
+
+// A bucket segment is a fixed-size allocation, so its views must be sized by that fixed length - never by the resolved
+// block's data.length, which runs to the end of the buffer (a pointer-resolved view is unbounded in every mode). Sizing a
+// bucket view by data.length let the head-clearing loop write across every allocation above the segment and stomp their
+// block headers - previously invisible because test-mode views used to be bounded.
+describe('SharedSpatialMap bucket growth stays inside its segment block', () => {
+	it('does not corrupt neighbouring allocations when the bucket table grows', () => {
+		let heap = new MemoryHeap();
+		let map = new SharedSpatialMap(heap, { gridSize: 50, buckets: 4, maxBuckets: 64, maxEntities: 5000 });
+
+		// Canary lives above the first bucket segment (allocated during construction). A segment-0 re-clear that overran its
+		// block would fill this with the null-index sentinel; the fixed-length view leaves it untouched.
+		let canary = heap.allocUI32(64);
+		for(let i = 0; i < 64; i++) {
+			canary.data[i] = 0xabc0000 + i;
+		}
+
+		// Wide entities produce many slots per insert, so a single insert crosses the load factor and triggers a resizeBuckets
+		// that re-clears the existing segment. Stop the moment the table grows so no later op runs against corrupted memory.
+		let grew = false;
+		for(let id = 1; id <= 50 && !grew; id++) {
+			map.insert(id, id * 137, id * 197, 200, 200);
+			grew = map.buckets > 4;
+		}
+		expect(grew).toBe(true);
+
+		for(let i = 0; i < 64; i++) {
+			expect(canary.data[i]).toBe(0xabc0000 + i);
+		}
+	});
+});

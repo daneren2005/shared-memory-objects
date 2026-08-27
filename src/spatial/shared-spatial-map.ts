@@ -693,8 +693,11 @@ export default class SharedSpatialMap {
 
 		let pointer = this.bucketPointers.at(segmentIndex);
 		let block = new AllocatedMemory(this.memory, getPointer(pointer, this.memory.positionBits));
-		let ints = new Int32Array(block.data.buffer, block.bufferByteOffset, block.data.length);
-		this.bucketHeadSegments[segmentIndex] = new Uint32Array(block.data.buffer, block.bufferByteOffset, block.data.length);
+		// A segment is exactly BUCKETS_PER_SEGMENT * BUCKET_SIZE u32s. Never size the view by block.data.length: a production
+		// build leaves that view unbounded (it runs to the end of the buffer), so the head-clearing loops below would write
+		// across every allocation that follows this block and stomp their headers.
+		let ints = new Int32Array(block.data.buffer, block.bufferByteOffset, BUCKETS_PER_SEGMENT * BUCKET_SIZE);
+		this.bucketHeadSegments[segmentIndex] = new Uint32Array(block.data.buffer, block.bufferByteOffset, BUCKETS_PER_SEGMENT * BUCKET_SIZE);
 		this.bucketSegments[segmentIndex] = ints;
 		return ints;
 	}
@@ -703,7 +706,7 @@ export default class SharedSpatialMap {
 		let needed = Math.ceil(bucketCount / BUCKETS_PER_SEGMENT);
 		while(this.bucketPointers.length < needed) {
 			let block = this.memory.allocUI32(BUCKETS_PER_SEGMENT * BUCKET_SIZE);
-			let heads = new Uint32Array(block.data.buffer, block.bufferByteOffset, block.data.length);
+			let heads = new Uint32Array(block.data.buffer, block.bufferByteOffset, BUCKETS_PER_SEGMENT * BUCKET_SIZE);
 			for(let i = BUCKET_HEAD_OFFSET; i < heads.length; i += BUCKET_SIZE) {
 				heads[i] = this.nullIndex;
 			}
