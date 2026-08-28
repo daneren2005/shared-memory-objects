@@ -36,6 +36,16 @@ describe('MemoryHeap', () => {
 		memory.allocUI32(200);
 		expect(memory.buffers.length).toEqual(3);
 	});
+	it('appends growth after every initial buffer', () => {
+		let memory = new MemoryHeap({ bufferSize: 200, initialBuffers: 3, autoGrowSize: 0 });
+		const initialBuffers = memory.buffers.map(buffer => buffer.buf);
+
+		const allocations = Array.from({ length: 4 }, () => memory.allocUI32(20));
+
+		expect(allocations.map(allocation => allocation.bufferPosition)).toEqual([0, 1, 2, 3]);
+		expect(memory.buffers.length).toEqual(4);
+		expect(memory.buffers.slice(0, 3).map(buffer => buffer.buf)).toEqual(initialBuffers);
+	});
 	it('can re-create from raw memory and continue working', () => {
 		let mainMemory = new MemoryHeap({ bufferSize: 200 });
 		let copyMemory = new MemoryHeap(mainMemory.getSharedMemory());

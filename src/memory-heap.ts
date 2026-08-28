@@ -72,7 +72,6 @@ export default class MemoryHeap {
 				throw new Error('Failed to initialize first byte from buffer');
 			}
 			this.memory.data[BUFFER_SIZE_INDEX] = bufferSize;
-			this.memory.data[BUFFER_COUNT_INDEX] = 1;
 			this.memory.data[BUFFER_AUTO_GROW_INDEX] = config?.autoGrowSize ?? 100;
 			this.memory.data[BUFFER_POSITION_BITS_INDEX] = this.positionBits;
 			this.isClone = false;
@@ -80,6 +79,7 @@ export default class MemoryHeap {
 			for(let i = 1; i < (config?.initialBuffers ?? 1); i++) {
 				this.buffers.push(this.createBuffer(bufferSize));
 			}
+			this.memory.data[BUFFER_COUNT_INDEX] = this.buffers.length;
 		}
 	}
 
