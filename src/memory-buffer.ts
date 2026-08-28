@@ -203,74 +203,6 @@ export default class MemoryBuffer {
 		return blockDataAddress(block);
 	}
 
-	realloc(ptr: number, bytes: number) {
-		if(bytes <= 0) {
-			return 0;
-		}
-		const oldAddr = blockSelfAddress(ptr);
-		let newAddr = 0;
-		let block = this._used;
-		let blockEnd = 0;
-		while(block) {
-			if(block === oldAddr) {
-				[newAddr, blockEnd] = this.reallocBlock(block, bytes);
-				break;
-			}
-			block = this.blockNext(block);
-		}
-		// copy old block contents to new addr
-		if(newAddr && newAddr !== oldAddr) {
-			this.u8.copyWithin(
-				blockDataAddress(newAddr),
-				blockDataAddress(oldAddr),
-				blockEnd,
-			);
-		}
-		return blockDataAddress(newAddr);
-	}
-
-	private reallocBlock(block: number, bytes: number) {
-		const blockSize = this.blockSize(block);
-		const blockEnd = block + blockSize;
-		const isTop = blockEnd >= this.top;
-		const paddedSize = align(bytes + SIZEOF_MEM_BLOCK, this.align);
-		// shrink & possibly split existing block
-		if(paddedSize <= blockSize) {
-			if(this.doSplit) {
-				const excess = blockSize - paddedSize;
-				if(excess >= this.minSplit) {
-					this.splitBlock(block, paddedSize, excess);
-				} else if(isTop) {
-					this.top = block + paddedSize;
-				}
-			} else if(isTop) {
-				this.top = block + paddedSize;
-			}
-			return [block, blockEnd];
-		}
-		// try to enlarge block if current top
-		if(isTop && block + paddedSize < this.end) {
-			this.top = block + this.setBlockSize(block, paddedSize);
-			return [block, blockEnd];
-		}
-		// fallback to free & malloc
-		this.free(block);
-		return [blockSelfAddress(this.malloc(bytes)), blockEnd];
-	}
-
-	reallocArray<T extends TypedArray>(array: T, num: number): T | undefined {
-		if(array.buffer !== this.buf) {
-			return undefined;
-		}
-		const addr = this.realloc(
-			array.byteOffset,
-			num * array.BYTES_PER_ELEMENT,
-		);
-		return addr
-			? new (<any>array.constructor)(this.buf, addr, num)
-			: undefined;
-	}
-
 	bytesFor(ptrOrArray: number | TypedArray): number | undefined {
 		let addr: number;
 		if(typeof ptrOrArray !== 'number') {
@@ -338,12 +270,6 @@ export default class MemoryBuffer {
 
 		unlock(this.lock);
 		return false;
-	}
-
-	freeAll() {
-		this._free = 0;
-		this._used = 0;
-		this.top = this.initialTop();
 	}
 
 	release() {
