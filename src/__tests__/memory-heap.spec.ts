@@ -134,13 +134,14 @@ describe('MemoryHeap', () => {
 		expect(heap.bufferSize).toEqual(Math.pow(2, 23));
 	});
 
-	it('Another thread updating old freed memory should not break', () => {
+	it('Another thread updating old freed memory does not corrupt a following allocation', () => {
 		let memory = new MemoryHeap({ bufferSize: 200 });
 		let block1 = memory.allocUI32(16);
 		block1.free();
 
 		let block2 = memory.allocUI32(12);
 		let block3 = memory.allocUI32(4);
+		block3.data.fill(30);
 
 		block1.data.fill(20);
 		let shared2 = memory.getSharedAlloc(block2.getSharedMemory());
@@ -148,6 +149,8 @@ describe('MemoryHeap', () => {
 
 		expect(shared2).toBeDefined();
 		expect(shared3).toBeDefined();
+		expect(block3.data).toEqual(new Uint32Array([30, 30, 30, 30]));
+		expect(block3.usedMemory).toEqual(16);
 	});
 
 	it('ensureSpareBuffer grows a fanned-out empty buffer only when none is free', () => {

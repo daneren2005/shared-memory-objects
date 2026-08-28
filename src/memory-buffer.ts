@@ -191,7 +191,10 @@ export default class MemoryBuffer {
 		this.setBlockNext(block, this._used);
 		this._used = block;
 		if(isTop) {
-			this.top = block + this.setBlockSize(block, paddedSize);
+			// Without splitting, shrinking would expose a new block header inside stale views of the old allocation.
+			if(this.doSplit || paddedSize >= blockSize) {
+				this.top = block + this.setBlockSize(block, paddedSize);
+			}
 		} else if(this.doSplit) {
 			const excess = blockSize - paddedSize;
 			excess >= this.minSplit &&
