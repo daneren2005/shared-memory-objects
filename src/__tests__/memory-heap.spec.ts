@@ -186,6 +186,25 @@ describe('MemoryHeap', () => {
 		expect(mainMemory.buffers.length).toEqual(3);
 	});
 
+	it('double freeing a block leaves other allocations intact', () => {
+		let memory = new MemoryHeap({ bufferSize: 1_024 });
+		let block1 = memory.allocUI32(8);
+		let block2 = memory.allocUI32(8);
+		block2.data.fill(7);
+
+		block1.free();
+		block1.free();
+
+		// A corrupted free list would cycle and hand block1's address out to both allocations; block2 must stay intact
+		let block3 = memory.allocUI32(8);
+		let block4 = memory.allocUI32(8);
+		block3.data.fill(9);
+		block4.data.fill(11);
+		expect(block2.data).toEqual(new Uint32Array(8).fill(7));
+		expect(block3.bufferByteOffset).not.toEqual(block4.bufferByteOffset);
+		expect(block3.bufferByteOffset).not.toEqual(block2.bufferByteOffset);
+	});
+
 	it('round allocs', () => {
 		let memory = new MemoryHeap({ bufferSize: 200 });
 

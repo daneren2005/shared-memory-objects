@@ -1,6 +1,6 @@
 import AllocatedMemory, { type AllocatedMemoryPointer, type SharedAllocatedMemory } from './allocated-memory';
 import { MAX_BYTE_OFFSET_LENGTH, positionBitsForBufferSize } from './utils/pointer';
-import MemoryBuffer, { SIZEOF_MEM_BLOCK, SIZEOF_STATE } from './memory-buffer';
+import MemoryBuffer, { FIRST_BLOCK_DATA_BYTE_OFFSET, SIZEOF_MEM_BLOCK, SIZEOF_STATE } from './memory-buffer';
 
 const DEFAULT_BUFFER_SIZE = MAX_BYTE_OFFSET_LENGTH;
 const MAX_BUFFER_SIZE = Math.pow(2, 31);
@@ -14,6 +14,9 @@ export default class MemoryHeap {
 	private onGrowBufferHandlers: Array<OnGrowBuffer> = [];
 	isClone: boolean;
 	private memory: AllocatedMemory;
+
+	// Per-heap (per-thread) hint of the last buffer we allocated into
+	private allocCursor = 0;
 
 	positionBits: number;
 	// Max buffer position (count) and max byte offset the split can address
@@ -40,10 +43,10 @@ export default class MemoryHeap {
 				});
 			});
 
-			// TODO: This should be programic instead of hoping the first allocation is always byte 40
+			// The heap state block is always the first allocation, so its data sits at this fixed, header-derived offset.
 			this.memory = new AllocatedMemory(this, {
 				bufferPosition: 0,
-				bufferByteOffset: 40,
+				bufferByteOffset: FIRST_BLOCK_DATA_BYTE_OFFSET,
 			} satisfies AllocatedMemoryPointer);
 			this.positionBits = this.memory.data[BUFFER_POSITION_BITS_INDEX];
 			this.isClone = true;
@@ -146,7 +149,9 @@ export default class MemoryHeap {
 
 	allocUI32(count: number): AllocatedMemory {
 		count = Math.ceil(count);
-		for(let i = 0; i < this.buffers.length; i++) {
+		const bufferCount = this.buffers.length;
+		for(let n = 0; n < bufferCount; n++) {
+			const i = (this.allocCursor + n) % bufferCount;
 			const buffer = this.buffers[i];
 			// Should just mean we haven't synced this buffer from another thread yet
 			if(!buffer) {
@@ -156,6 +161,8 @@ export default class MemoryHeap {
 			// Should be fine to initialize all values as 0s since unsigned/signed ints and floats all store 0 as all 0s
 			const data = buffer.callocAs('u32', count);
 			if(data) {
+				this.allocCursor = i;
+
 				// Auto grow when nearly full when we need buffer to already be sync'd between threads BEFORE we try to use it
 				if(
 					i === (this.buffers.length - 1)
@@ -184,6 +191,7 @@ export default class MemoryHeap {
 		let buffer = this.growBuffer();
 		const data = buffer.callocAs('u32', count);
 		if(data) {
+			this.allocCursor = this.buffers.indexOf(buffer);
 			return new AllocatedMemory(this, {
 				data,
 				buffer,

@@ -14,6 +14,8 @@ const STATE_END = 3;
 const STATE_ALIGN = 4;
 const STATE_FLAGS = 5;
 const STATE_MIN_SPLIT = 6;
+// Highest top ever reached. callock can skip re-zeroing it
+const STATE_HIGH_WATER = 7;
 
 const MASK_COMPACT = 1;
 const MASK_SPLIT = 2;
@@ -32,12 +34,21 @@ const SIZEOF = {
 	f64: 8,
 };
 
-const SIZEOF_STATE = 8 * 4;
+const SIZEOF_STATE = 9 * 4;
 
 const MEM_BLOCK_SIZE = 0;
 const MEM_BLOCK_NEXT = 1;
+// The used list is doubly linked so free() can unlink a block in O(1) instead of walking to find its predecessor.
+// MEM_BLOCK_STATE marks live blocks so free() rejects a double-free (which would otherwise splice free-list pointers
+// into the used list) without that walk. Word 3 also pads the header to 16 bytes, keeping data addresses aligned exactly
+// as the original 8-byte header did.
+const MEM_BLOCK_PREV = 2;
+const MEM_BLOCK_STATE = 3;
 
-const SIZEOF_MEM_BLOCK = 2 * 4;
+const SIZEOF_MEM_BLOCK = 4 * 4;
+
+const BLOCK_FREE = 0;
+const BLOCK_USED = 1;
 
 // Copied from https://github.com/thi-ng/umbrella/blob/develop/packages/malloc/src/pool.ts
 // Changes: Atomic.load/store on state, simple lock on malloc/free
@@ -50,6 +61,9 @@ export default class MemoryBuffer {
 	protected u32: Uint32Array;
 	protected state: Uint32Array;
 	protected lock: Int32Array;
+	// Whether the most recent malloc came from never-before-allocated (already-zeroed) memory. Per-instance/per-thread and
+	// read by calloc immediately after malloc under the same call, so no locking is needed.
+	private lastMallocFresh = false;
 
 	constructor(opts: Partial<MemoryBufferConfig> = {}) {
 		this.buf = opts.buf ? opts.buf : new ArrayBuffer(opts.size || 0x1000);
@@ -81,9 +95,10 @@ export default class MemoryBuffer {
 			this.align = _align;
 			this.doCompact = opts.compact !== false;
 			this.doSplit = opts.split !== false;
-			this.minSplit = opts.minSplit || 16;
+			this.minSplit = opts.minSplit || SIZEOF_MEM_BLOCK * 2;
 			this.end = resolvedEnd;
 			this.top = top;
+			this.highWater = top;
 			this._free = 0;
 			this._used = 0;
 		}
@@ -117,7 +132,8 @@ export default class MemoryBuffer {
 
 	callocAs<T extends Type>(type: T, num: number, fill = 0) {
 		const block = this.mallocAs(type, num);
-		block && block.fill(fill);
+		// Fresh bump memory is already zero from the backing buffer; only fill for a non-zero value or reused (dirty) memory.
+		block && (fill !== 0 || !this.lastMallocFresh) && block.fill(fill);
 		return block;
 	}
 
@@ -128,7 +144,8 @@ export default class MemoryBuffer {
 
 	calloc(bytes: number, fill = 0) {
 		const addr = this.malloc(bytes);
-		addr && this.u8.fill(fill, addr, addr + bytes);
+		// Fresh bump memory is already zero from the backing buffer; only fill for a non-zero value or reused (dirty) memory.
+		addr && (fill !== 0 || !this.lastMallocFresh) && this.u8.fill(fill, addr, addr + bytes);
 		return addr;
 	}
 
@@ -139,6 +156,10 @@ export default class MemoryBuffer {
 		lock(this.lock);
 		const paddedSize = align(bytes + SIZEOF_MEM_BLOCK, this.align);
 		const end = this.end;
+		// Without compaction top never retreats, so bump memory is always pristine and no high-water tracking is needed. With
+		// compaction top can move back below the high-water mark, so a bump there reuses dirty memory and must be zeroed.
+		const doCompact = this.doCompact;
+		const highWater = doCompact ? this.highWater : 0;
 		let top = this.top;
 		let block = this._free;
 		let prev = 0;
@@ -154,6 +175,11 @@ export default class MemoryBuffer {
 					isTop,
 				);
 
+				// A free-list block was previously allocated (below the high-water mark), so its memory is dirty.
+				this.lastMallocFresh = result !== 0 && doCompact && block >= highWater;
+				if(doCompact && this.top > highWater) {
+					this.highWater = this.top;
+				}
 				unlock(this.lock);
 				return result;
 			}
@@ -163,14 +189,20 @@ export default class MemoryBuffer {
 		block = top;
 		top = block + paddedSize;
 		if(top <= end) {
-			this.initBlock(block, paddedSize, this._used);
-			this._used = block;
+			this.setBlockSize(block, paddedSize);
+			this.pushUsed(block);
 			this.top = top;
+			// Bump allocation only ever advances into untouched memory, so it is fresh whenever it is at/above the mark.
+			this.lastMallocFresh = !doCompact || block >= highWater;
+			if(doCompact && top > highWater) {
+				this.highWater = top;
+			}
 			let result = blockDataAddress(block);
 			unlock(this.lock);
 
 			return result;
 		}
+		this.lastMallocFresh = false;
 		unlock(this.lock);
 		return 0;
 	}
@@ -188,8 +220,7 @@ export default class MemoryBuffer {
 		} else {
 			this._free = this.blockNext(block);
 		}
-		this.setBlockNext(block, this._used);
-		this._used = block;
+		this.pushUsed(block);
 		if(isTop) {
 			// Without splitting, shrinking would expose a new block header inside stale views of the old allocation.
 			if(this.doSplit || paddedSize >= blockSize) {
@@ -249,27 +280,27 @@ export default class MemoryBuffer {
 		}
 		lock(this.lock);
 		addr = blockSelfAddress(addr);
-		let block = this._used;
-		let prev = 0;
-		while(block) {
-			if(block === addr) {
-				if(prev) {
-					this.unlinkBlock(prev, block);
-				} else {
-					this._used = this.blockNext(block);
-				}
-				this.insert(block);
-				this.doCompact && this.compact();
-
-				unlock(this.lock);
-				return true;
-			}
-			prev = block;
-			block = this.blockNext(block);
+		// Reject anything not currently live (double-free or a stray pointer) without walking the used list.
+		if(this.blockState(addr) !== BLOCK_USED) {
+			unlock(this.lock);
+			return false;
 		}
+		const next = this.blockNext(addr);
+		const prev = this.blockPrev(addr);
+		if(prev) {
+			this.setBlockNext(prev, next);
+		} else {
+			this._used = next;
+		}
+		if(next) {
+			this.setBlockPrev(next, prev);
+		}
+		this.setBlockState(addr, BLOCK_FREE);
+		this.insert(addr);
+		this.doCompact && this.compact();
 
 		unlock(this.lock);
-		return false;
+		return true;
 	}
 
 	release() {
@@ -302,6 +333,14 @@ export default class MemoryBuffer {
 
 	protected set top(x: number) {
 		Atomics.store(this.state, STATE_TOP, x);
+	}
+
+	protected get highWater() {
+		return Atomics.load(this.state, STATE_HIGH_WATER);
+	}
+
+	protected set highWater(x: number) {
+		Atomics.store(this.state, STATE_HIGH_WATER, x);
 	}
 
 	// No live allocations. O(1) (the head of the used list, not a walk like stats()), so it is cheap to poll each
@@ -387,6 +426,34 @@ export default class MemoryBuffer {
 		Atomics.store(this.u32, (block >> 2) + MEM_BLOCK_NEXT, next);
 	}
 
+	protected blockPrev(block: number) {
+		return Atomics.load(this.u32, (block >> 2) + MEM_BLOCK_PREV);
+	}
+
+	protected setBlockPrev(block: number, prev: number) {
+		Atomics.store(this.u32, (block >> 2) + MEM_BLOCK_PREV, prev);
+	}
+
+	protected blockState(block: number) {
+		return Atomics.load(this.u32, (block >> 2) + MEM_BLOCK_STATE);
+	}
+
+	protected setBlockState(block: number, state: number) {
+		Atomics.store(this.u32, (block >> 2) + MEM_BLOCK_STATE, state);
+	}
+
+	// Prepend a block onto the doubly-linked used list, keeping the back-links free() relies on for O(1) removal.
+	protected pushUsed(block: number) {
+		const head = this._used;
+		this.setBlockNext(block, head);
+		this.setBlockPrev(block, 0);
+		this.setBlockState(block, BLOCK_USED);
+		if(head) {
+			this.setBlockPrev(head, block);
+		}
+		this._used = block;
+	}
+
 	/**
 	 * Initializes block header with given `size` and `next` pointer. Returns `block`.
 	 *
@@ -394,10 +461,12 @@ export default class MemoryBuffer {
 	 * @param size -
 	 * @param next -
 	 */
+	// Only used for free-list blocks (split excess); the used list is built via pushUsed which also sets prev/state.
 	protected initBlock(block: number, size: number, next: number) {
 		const idx = block >>> 2;
 		Atomics.store(this.u32, idx + MEM_BLOCK_SIZE, size);
 		Atomics.store(this.u32, idx + MEM_BLOCK_NEXT, next);
+		Atomics.store(this.u32, idx + MEM_BLOCK_STATE, BLOCK_FREE);
 		return block;
 	}
 
@@ -476,6 +545,13 @@ export default class MemoryBuffer {
 	 * @param block -
 	 */
 	protected insert(block: number) {
+		// Address ordering only exists so compact() can merge neighbours; without compaction a prepend keeps free O(1).
+		if(!this.doCompact) {
+			this.setBlockNext(block, this._free);
+			this._free = block;
+			return;
+		}
+
 		let ptr = this._free;
 		let prev = 0;
 		while(ptr) {
@@ -517,7 +593,11 @@ function align(addr: number, size: number) {
 
 // Bytes reserved before usable heap space (allocator state) and the per-allocation block header. Exported so callers can
 // size an allocation against what a single buffer can actually hold.
-export { SIZEOF_STATE, SIZEOF_MEM_BLOCK };
+// Byte offset of the first allocation's data in a freshly initialized buffer (default align). The heap's state block is
+// always the first allocation, so a clone can resolve it without guessing.
+const FIRST_BLOCK_DATA_BYTE_OFFSET = align(SIZEOF_STATE + SIZEOF_MEM_BLOCK, 8);
+
+export { SIZEOF_STATE, SIZEOF_MEM_BLOCK, FIRST_BLOCK_DATA_BYTE_OFFSET };
 
 type Type = 'u8' | 'u8c' | 'i8' | 'u16' | 'i16' | 'u32' | 'i32' | 'f32' | 'f64';
 

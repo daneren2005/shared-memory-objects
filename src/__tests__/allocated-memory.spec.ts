@@ -1,6 +1,6 @@
 import MemoryHeap from '../memory-heap';
 
-const START_BYTE = 64;
+const START_BYTE = 88;
 describe('AllocatedMemory', () => {
 	it('restores bounded allocation and slice views', () => {
 		let heap = new MemoryHeap({ bufferSize: 1024 * 16 });
