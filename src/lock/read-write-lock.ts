@@ -33,6 +33,11 @@ export function writeLock(data: Int32Array, index: number = 0) {
 	}
 	Atomics.sub(data, index + 1, 1);
 }
+// Non-blocking write acquire: succeeds only when there is no active reader and no writer. Unlike writeLock it never
+// registers a pending writer, so a failed attempt leaves readers completely untouched - the caller just backs off.
+export function tryWriteLock(data: Int32Array, index: number = 0): boolean {
+	return Atomics.compareExchange(data, index, 0, WRITE_LOCKED) === 0;
+}
 
 export function readUnlock(data: Int32Array, index: number = 0) {
 	if(Atomics.sub(data, index, 1) === 1) {

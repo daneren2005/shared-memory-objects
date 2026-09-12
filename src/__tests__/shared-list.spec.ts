@@ -132,6 +132,43 @@ describe('SharedList', () => {
 		expect(list.length).toEqual(1);
 	});
 
+	it('auto-reclaims dead nodes during delete without a manual compact()', () => {
+		let list = new SharedList(memory);
+		for(let i = 0; i < 200; i++) {
+			list.insert(i);
+		}
+		let fullMemory = memory.currentUsed;
+
+		// Delete most values; reclaim fires automatically once dead nodes catch up to live ones
+		for(let i = 0; i < 180; i++) {
+			list.deleteValue(i);
+		}
+
+		expect(memory.currentUsed).toBeLessThan(fullMemory);
+		expect(list.length).toEqual(20);
+		expect(flat(list)).toEqual([180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199]);
+	});
+
+	it('steady-state churn stays bounded in memory without compact()', () => {
+		let list = new SharedList(memory);
+		list.insert(9_000_001);
+		list.insert(9_000_002);
+		let liveMemory = memory.currentUsed;
+
+		let peak = 0;
+		for(let i = 0; i < 5_000; i++) {
+			list.insert(i);
+			list.deleteValue(i);
+			peak = Math.max(peak, memory.currentUsed);
+		}
+
+		// Without reclamation this would grow to ~5000 dead nodes; auto-reclaim keeps the overhead to a bounded backlog of
+		// dead nodes (well under 128 node-sized allocations) instead of growing with the number of operations
+		expect(peak - liveMemory).toBeLessThan(128 * 32);
+		expect(flat(list)).toEqual([9_000_001, 9_000_002]);
+		expect(list.length).toEqual(2);
+	});
+
 	it('can insert and delete over and over again without leaking memory', () => {
 		let list = new SharedList(memory);
 		list.insert(5);
