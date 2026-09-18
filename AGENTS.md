@@ -5,5 +5,5 @@
 - Always check there are no lint or type errors after editing a file
 - Do not ever use @ts-nocheck
 - Use "npm run type-check" and "npm run lint" after changes to verify type and formatting is correct
-- Do not run git commands
+- Do not run Git commands except during an explicitly requested dependency-maintenance task. For that task only, Git may be used to create and manage an isolated worktree, inspect status and diffs, create a dedicated dependency-update branch and commits, and push that branch for a pull request. Do not merge, rewrite history, delete branches, or discard user changes; destructive commands such as `git reset --hard`, `git clean`, `git checkout --`, and `git restore` remain prohibited unless the user explicitly authorizes them.
 - Do not modify NOTES.md
