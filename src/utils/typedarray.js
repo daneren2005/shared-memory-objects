@@ -1,7 +1,7 @@
 // Copied from @thi.ng/api/typedarray
 // TODO: rewrite without this but for now just forked in order to add Atomics to base library
 
-var GLType = /* @__PURE__ */ ((GLType2) => {
+const GLType = /* @__PURE__ */ ((GLType2) => {
 	GLType2[GLType2['I8'] = 5120] = 'I8';
 	GLType2[GLType2['U8'] = 5121] = 'U8';
 	GLType2[GLType2['I16'] = 5122] = 'I16';
@@ -10,7 +10,7 @@ var GLType = /* @__PURE__ */ ((GLType2) => {
 	GLType2[GLType2['U32'] = 5125] = 'U32';
 	GLType2[GLType2['F32'] = 5126] = 'F32';
 	return GLType2;
-})(GLType || {});
+})({});
 const GL2TYPE = {
 	[5120 /* I8 */]: 'i8',
 	[5121 /* U8 */]: 'u8',
