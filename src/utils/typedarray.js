@@ -97,8 +97,9 @@ function typedArray(type, ...xs) {
 }
 function typedArrayOfVec(type, data, stride) {
 	const $data = Array.isArray(data) ? data : [...data];
-	if(stride === void 0)
+	if(stride === void 0) {
 		stride = $data[0].length;
+	}
 	const num = $data.length;
 	const res = typedArray(type, num * stride);
 	for(let i = 0, j = 0; i < num; i++, j += stride) {
@@ -107,11 +108,13 @@ function typedArrayOfVec(type, data, stride) {
 	return res;
 }
 const typedArrayType = (x) => {
-	if(Array.isArray(x))
+	if(Array.isArray(x)) {
 		return 'f64';
+	}
 	for(let id in TYPEDARRAY_CTORS) {
-		if(x instanceof TYPEDARRAY_CTORS[id])
+		if(x instanceof TYPEDARRAY_CTORS[id]) {
 			return id;
+		}
 	}
 	return 'f64';
 };

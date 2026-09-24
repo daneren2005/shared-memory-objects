@@ -43,7 +43,9 @@ async function main() {
 	let missing = 0;
 	for(let w = 0; w < WORKER_COUNT; w++) {
 		for(let i = 0; i < PER_WORKER; i++) {
-			if(!afterInsert.has(w * PER_WORKER + i)) missing++;
+			if(!afterInsert.has(w * PER_WORKER + i)) {
+				missing++;
+			}
 		}
 	}
 	check('phase1 missing values', missing, 0);
@@ -57,7 +59,9 @@ async function main() {
 	check('phase2 unique count', afterDelete.size, expectedSurvivors);
 	let wrong = 0;
 	for(const value of afterDelete) {
-		if(value % 2 === 0) wrong++;
+		if(value % 2 === 0) {
+			wrong++;
+		}
 	}
 	check('phase2 even survivors (should be 0)', wrong, 0);
 

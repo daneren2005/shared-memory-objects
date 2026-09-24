@@ -214,7 +214,9 @@ export default class MemoryBuffer {
 		paddedSize: number,
 		isTop: boolean,
 	) {
-		if(isTop && block + paddedSize > this.end) return 0;
+		if(isTop && block + paddedSize > this.end) {
+			return 0;
+		}
 		if(prev) {
 			this.unlinkBlock(prev, block);
 		} else {
@@ -555,7 +557,9 @@ export default class MemoryBuffer {
 		let ptr = this._free;
 		let prev = 0;
 		while(ptr) {
-			if(block <= ptr) break;
+			if(block <= ptr) {
+				break;
+			}
 			prev = ptr;
 			ptr = this.blockNext(ptr);
 		}

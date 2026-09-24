@@ -54,8 +54,11 @@ describe('SharedList reclaim thread safety', () => {
 			for(let i = 0; i < PERMANENT_COUNT; i++) {
 				let value = workerId * 1_000_000 + i;
 				let seen = counts.get(value) ?? 0;
-				if(seen === 0) missing.push(value);
-				else if(seen > 1) duplicated.push(value);
+				if(seen === 0) {
+					missing.push(value);
+				} else if(seen > 1) {
+					duplicated.push(value);
+				}
 			}
 		}
 		expect(missing).toEqual([]);
