@@ -1,4 +1,4 @@
-import { bench, describe } from 'vitest';
+import { benchmarkSuite } from './helpers/benchmark-suite';
 import MemoryBuffer from '../memory-buffer';
 import MemoryHeap from '../memory-heap';
 import type AllocatedMemory from '../allocated-memory';
@@ -25,7 +25,7 @@ function fillBuffer() {
 	return { buffer, addrs };
 }
 
-describe(`MemoryBuffer: ${ALLOC_COUNT} allocations`, () => {
+benchmarkSuite(`MemoryBuffer: ${ALLOC_COUNT} allocations`, (bench) => {
 	bench('malloc', () => {
 		const buffer = makeBuffer();
 		for(let i = 0; i < ALLOC_COUNT; i++) {
@@ -63,7 +63,7 @@ describe(`MemoryBuffer: ${ALLOC_COUNT} allocations`, () => {
 	});
 });
 
-describe(`MemoryBuffer: free ${ALLOC_COUNT} allocations`, () => {
+benchmarkSuite(`MemoryBuffer: free ${ALLOC_COUNT} allocations`, (bench) => {
 	let buffer: MemoryBuffer;
 	let addrs: Array<number>;
 
@@ -115,7 +115,7 @@ describe(`MemoryBuffer: free ${ALLOC_COUNT} allocations`, () => {
 // Large blocks where zero-filling dominates the per-allocation cost, so skipping it on fresh memory is visible.
 const LARGE_ALLOC_COUNT = 100;
 const LARGE_ALLOC_SIZE = 16 * 1024;
-describe(`MemoryBuffer: ${LARGE_ALLOC_COUNT} large callocAs`, () => {
+benchmarkSuite(`MemoryBuffer: ${LARGE_ALLOC_COUNT} large callocAs`, (bench) => {
 	bench('callocAs (fresh)', () => {
 		const buffer = makeBuffer();
 		for(let i = 0; i < LARGE_ALLOC_COUNT; i++) {
@@ -145,7 +145,7 @@ describe(`MemoryBuffer: ${LARGE_ALLOC_COUNT} large callocAs`, () => {
 });
 
 const CHURN_COUNT = 20_000;
-describe(`MemoryBuffer: ${CHURN_COUNT} alloc/free churn`, () => {
+benchmarkSuite(`MemoryBuffer: ${CHURN_COUNT} alloc/free churn`, (bench) => {
 	// Steady-state churn over a live set: half the ops allocate, half free a random live block.
 	bench('mixed alloc/free', () => {
 		const buffer = makeBuffer();
@@ -167,7 +167,7 @@ describe(`MemoryBuffer: ${CHURN_COUNT} alloc/free churn`, () => {
 });
 
 const HEAP_COUNT = 5_000;
-describe(`MemoryHeap: ${HEAP_COUNT} alloc + free`, () => {
+benchmarkSuite(`MemoryHeap: ${HEAP_COUNT} alloc + free`, (bench) => {
 	bench('allocUI32', () => {
 		const memory = new MemoryHeap({ bufferSize: BUFFER_SIZE });
 		for(let i = 0; i < HEAP_COUNT; i++) {

@@ -1,4 +1,4 @@
-import { bench, describe } from 'vitest';
+import { benchmarkSuite } from '../../__tests__/helpers/benchmark-suite';
 import { Quadtree as QuadtreeTs, Rectangle } from '@timohausmann/quadtree-ts';
 import Flatbush from 'flatbush';
 import MemoryHeap from '../../memory-heap';
@@ -118,7 +118,7 @@ function buildFlatbush(movedEntityCount = 0): Flatbush {
 	return index;
 }
 
-describe(`insert ${ENTITY_COUNT} entities individually`, () => {
+benchmarkSuite(`insert ${ENTITY_COUNT} entities individually`, (bench) => {
 	bench('shared quadtree', () => {
 		buildShared();
 	});
@@ -136,7 +136,7 @@ describe(`insert ${ENTITY_COUNT} entities individually`, () => {
 	});
 });
 
-describe(`bulk insert ${ENTITY_COUNT} entities`, () => {
+benchmarkSuite(`bulk insert ${ENTITY_COUNT} entities`, (bench) => {
 	bench('shared quadtree', () => {
 		buildSharedBulk();
 	});
@@ -154,7 +154,7 @@ describe(`bulk insert ${ENTITY_COUNT} entities`, () => {
 	});
 });
 
-describe(`${QUERY_COUNT} broad-phase queries`, () => {
+benchmarkSuite(`${QUERY_COUNT} broad-phase queries`, (bench) => {
 	let sharedTree: SharedQuadtree;
 	let out: Array<number> = [];
 	bench('shared quadtree', () => {
@@ -216,7 +216,7 @@ describe(`${QUERY_COUNT} broad-phase queries`, () => {
 });
 
 function benchmarkNeighbors(label: string, maxResults: number) {
-	describe(`${QUERY_COUNT} ${label} nearest-neighbor queries`, () => {
+	benchmarkSuite(`${QUERY_COUNT} ${label} nearest-neighbor queries`, (bench) => {
 		let sharedTree: SharedQuadtree;
 		bench('shared quadtree', () => {
 			for(let query of queries) {
@@ -266,7 +266,7 @@ function benchmarkNeighbors(label: string, maxResults: number) {
 benchmarkNeighbors('single', 1);
 benchmarkNeighbors('ten', 10);
 
-describe(`move ${MOVED_ENTITY_COUNT} of ${ENTITY_COUNT} entities one step`, () => {
+benchmarkSuite(`move ${MOVED_ENTITY_COUNT} of ${ENTITY_COUNT} entities one step`, (bench) => {
 	let sharedTree: SharedQuadtree;
 	bench('shared quadtree', () => {
 		for(let i = 0; i < MOVED_ENTITY_COUNT; i++) {
@@ -308,7 +308,7 @@ describe(`move ${MOVED_ENTITY_COUNT} of ${ENTITY_COUNT} entities one step`, () =
 	});
 });
 
-describe(`move all ${ENTITY_COUNT} entities one step`, () => {
+benchmarkSuite(`move all ${ENTITY_COUNT} entities one step`, (bench) => {
 	let sharedTree: SharedQuadtree;
 	bench('shared quadtree', () => {
 		for(let entity of entities) {
