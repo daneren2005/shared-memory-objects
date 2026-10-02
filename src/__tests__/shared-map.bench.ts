@@ -1,4 +1,5 @@
-import { bench } from 'vitest';
+import { benchmarkSuite } from './helpers/benchmark-suite';
+import type { BenchmarkRegistrar } from './helpers/benchmark-suite';
 import MemoryHeap from '../memory-heap';
 import SharedMap from '../shared-map';
 
@@ -25,7 +26,7 @@ const implementations: Array<[string, Factory]> = [
 ];
 
 // Builds and fills a fresh map before each sample so the timed body starts from the same populated state
-function benchPopulated(name: string, factory: Factory, run: (map: MapLike) => void) {
+function benchPopulated(bench: BenchmarkRegistrar, name: string, factory: Factory, run: (map: MapLike) => void) {
 	let map: MapLike;
 	bench(name, () => {
 		run(map);
@@ -41,7 +42,7 @@ function benchPopulated(name: string, factory: Factory, run: (map: MapLike) => v
 	});
 }
 
-describe(`SharedMap implementations: ${COUNT} sets`, () => {
+benchmarkSuite(`SharedMap implementations: ${COUNT} sets`, (bench) => {
 	for(let [name, factory] of implementations) {
 		bench(name, () => {
 			let map = factory();
@@ -52,9 +53,9 @@ describe(`SharedMap implementations: ${COUNT} sets`, () => {
 	}
 });
 
-describe(`SharedMap implementations: ${COUNT} overwrites`, () => {
+benchmarkSuite(`SharedMap implementations: ${COUNT} overwrites`, (bench) => {
 	for(let [name, factory] of implementations) {
-		benchPopulated(name, factory, (map) => {
+		benchPopulated(bench, name, factory, (map) => {
 			for(let i = 0; i < COUNT; i++) {
 				map.set(keys[i], values[i] + 1);
 			}
@@ -62,9 +63,9 @@ describe(`SharedMap implementations: ${COUNT} overwrites`, () => {
 	}
 });
 
-describe(`SharedMap implementations: ${COUNT} gets`, () => {
+benchmarkSuite(`SharedMap implementations: ${COUNT} gets`, (bench) => {
 	for(let [name, factory] of implementations) {
-		benchPopulated(name, factory, (map) => {
+		benchPopulated(bench, name, factory, (map) => {
 			for(let i = 0; i < COUNT; i++) {
 				map.get(keys[i]);
 			}
@@ -72,9 +73,9 @@ describe(`SharedMap implementations: ${COUNT} gets`, () => {
 	}
 });
 
-describe(`SharedMap implementations: ${COUNT} deletes`, () => {
+benchmarkSuite(`SharedMap implementations: ${COUNT} deletes`, (bench) => {
 	for(let [name, factory] of implementations) {
-		benchPopulated(name, factory, (map) => {
+		benchPopulated(bench, name, factory, (map) => {
 			for(let i = 0; i < COUNT; i++) {
 				map.delete(keys[i]);
 			}
@@ -82,9 +83,9 @@ describe(`SharedMap implementations: ${COUNT} deletes`, () => {
 	}
 });
 
-describe(`SharedMap implementations: iterate ${COUNT} entries`, () => {
+benchmarkSuite(`SharedMap implementations: iterate ${COUNT} entries`, (bench) => {
 	for(let [name, factory] of implementations) {
-		benchPopulated(name, factory, (map) => {
+		benchPopulated(bench, name, factory, (map) => {
 			// eslint-disable-next-line
 			for(let entry of map) {}
 		});

@@ -1,4 +1,4 @@
-import { bench } from 'vitest';
+import { benchmarkSuite } from './helpers/benchmark-suite';
 import SharedList from '../shared-list';
 import MemoryHeap from '../memory-heap';
 import SharedMap from '../shared-map';
@@ -8,7 +8,7 @@ import LocalPool from '../local-pool';
 import SharedStack from '../shared-stack';
 
 const ITERATE_COUNT = 10_000;
-describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
+benchmarkSuite(`Shared Data Structures: ${ITERATE_COUNT} iterations`, (bench) => {
 	let sharedList: SharedList;
 	bench('shared list', () => {
 		// eslint-disable-next-line
@@ -107,7 +107,7 @@ describe(`Shared Data Structures: ${ITERATE_COUNT} iterations`, () => {
 
 
 const INDEX_COUNT = 1_000;
-describe(`Shared Data Structures: ${INDEX_COUNT} indexed locations`, () => {
+benchmarkSuite(`Shared Data Structures: ${INDEX_COUNT} indexed locations`, (bench) => {
 	let sharedVector: SharedVector;
 	bench('shared vector', () => {
 		for(let i = 0; i < INDEX_COUNT; i++) {
@@ -178,7 +178,7 @@ describe(`Shared Data Structures: ${INDEX_COUNT} indexed locations`, () => {
 });
 
 const INSERT_COUNT = 1_000;
-describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
+benchmarkSuite(`Shared Data Structures: ${INSERT_COUNT} inserts`, (bench) => {
 	bench('shared list', () => {
 		let memory = new MemoryHeap();
 		let list = new SharedList(memory);
@@ -267,7 +267,7 @@ describe(`Shared Data Structures: ${INSERT_COUNT} inserts`, () => {
 });
 
 const DELETE_COUNT = 1_000;
-describe(`Shared Data Structures: ${DELETE_COUNT} deletes end element`, () => {
+benchmarkSuite(`Shared Data Structures: ${DELETE_COUNT} deletes end element`, (bench) => {
 	const LOCAL_INSERT_COUNT = 2_000;
 
 	let sharedList: SharedList;
@@ -355,7 +355,7 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes end element`, () => {
 	});
 });
 
-describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () => {
+benchmarkSuite(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, (bench) => {
 	const LOCAL_INSERT_COUNT = 2_000;
 
 	let sharedList: SharedList;
@@ -444,7 +444,7 @@ describe(`Shared Data Structures: ${DELETE_COUNT} deletes random element`, () =>
 	});
 });
 
-describe(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random elements`, () => {
+benchmarkSuite(`Shared Data Structures: ${INSERT_COUNT} insert and deleting random elements`, (bench) => {
 	const RUN_COUNT = 2_000;
 
 	let sharedList: SharedList;
