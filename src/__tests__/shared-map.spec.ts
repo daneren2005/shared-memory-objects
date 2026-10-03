@@ -1,5 +1,6 @@
 import MemoryHeap from '../memory-heap';
 import SharedMap from '../shared-map';
+import { mix32 } from '../utils/hash';
 
 function insertRandom(map: SharedMap<string>) {
 	map.set(`${map.length + 1}`, Math.random() * 1_000_000);
@@ -292,15 +293,94 @@ describe('SharedMap', () => {
 		});
 	});
 
-	it('throws an actionable error instead of a cryptic allocator failure when the table cannot fit a buffer', () => {
-		let heap = new MemoryHeap({ bufferSize: 1024 * 1024, autoGrowSize: 0 });
-		let map = new SharedMap<number>(heap, { capacity: 16 });
+	it('fills all 65,536 slots with the default heap before rejecting a new key', () => {
+		let heap = new MemoryHeap();
+		let map = new SharedMap<number>(heap);
+		for(let id = 0; id < 65_536; id++) {
+			map.set(id, id);
+		}
+		expect(map.capacity).toEqual(65_536);
+		expect(map.length).toEqual(map.capacity);
+		for(let id = 0; id < map.capacity; id++) {
+			expect(map.get(id)).toEqual(id);
+		}
+		expect(Array.from(map)).toHaveLength(map.capacity);
+		let usedMemory = heap.currentUsed;
+		expect(() => map.set(65_536, 1)).toThrow(/SharedMap is full at capacity 65536/);
+		expect(map.length).toEqual(map.capacity);
+		expect(heap.currentUsed).toEqual(usedMemory);
+		map.free();
+	});
 
-		let entryCeiling = Math.floor(heap.maxAllocationLength / 3 * 3 / 4);
-		expect(() => {
-			for(let id = 0; id < entryCeiling + 100_000; id++) {
-				map.set(id, id);
+	it.each(['set', 'update', 'setAll'] as const)('%s handles a full table and reuses tombstones across colliding keys', operation => {
+		let heap = new MemoryHeap({ bufferSize: 1024, autoGrowSize: 0 });
+		let map = new SharedMap<number>(heap);
+		let clone = new SharedMap<number>(heap, map.getSharedMemory());
+		let capacity = 64;
+		let keys: Array<number> = [];
+		for(let key = 0; keys.length <= capacity; key++) {
+			if((mix32(key) & (capacity - 1)) === capacity - 1) {
+				keys.push(key);
 			}
-		}).toThrow(/exceed the largest contiguous allocation/);
+		}
+		let write = (entries: Array<readonly [number, number]>) => {
+			if(operation === 'setAll') {
+				clone.setAll(entries);
+			} else {
+				for(let [key, value] of entries) {
+					if(operation === 'set') {
+						clone.set(key, value);
+					} else {
+						clone.update(key, () => value);
+					}
+				}
+			}
+		};
+
+		write(keys.slice(0, capacity).map(key => [key, key]));
+		expect(map.capacity).toEqual(capacity);
+		expect(map.length).toEqual(capacity);
+		let usedMemory = heap.currentUsed;
+		expect(map.getAll([keys[0], keys[capacity - 1], keys[capacity]])).toEqual([keys[0], keys[capacity - 1], undefined]);
+		expect(map.has(keys[capacity])).toEqual(false);
+		expect(map.delete(keys[capacity])).toEqual(false);
+		expect(() => write([[keys[capacity], 1]])).toThrow(/SharedMap is full.*exceed the largest contiguous allocation/);
+		let updater = vi.fn<() => number>(() => 1);
+		expect(() => map.update(keys[capacity], updater)).toThrow(/SharedMap is full/);
+		expect(updater).not.toHaveBeenCalled();
+
+		write([[keys[capacity - 1], 123], [keys[capacity - 1], 456]]);
+		expect(map.get(keys[capacity - 1])).toEqual(456);
+		expect(map.length).toEqual(capacity);
+		expect(map.delete(keys[0])).toEqual(true);
+		expect(() => map.update(keys[capacity], () => {
+			throw new Error('updater failed');
+		})).toThrow('updater failed');
+		expect(map.length).toEqual(capacity - 1);
+		expect(map.get(keys[capacity])).toBeUndefined();
+		expect(map.get(keys[capacity - 1])).toEqual(456);
+		write([[keys[capacity - 1], 789]]);
+		expect(map.length).toEqual(capacity - 1);
+		expect(map.update(keys[capacity - 1], current => (current ?? 0) + 1)).toEqual(790);
+		write([[keys[capacity], 999]]);
+		expect(map.get(keys[capacity])).toEqual(999);
+		expect(map.get(keys[0])).toBeUndefined();
+		expect(map.length).toEqual(capacity);
+		expect(Array.from(map)).toHaveLength(capacity);
+		expect(heap.currentUsed).toEqual(usedMemory);
+	});
+
+	it('uses the full capacity with 64-bit values', () => {
+		let heap = new MemoryHeap({ bufferSize: 1024, autoGrowSize: 0 });
+		let map = new SharedMap<number, BigInt64Array>(heap, { type: BigInt64Array });
+		map.setAll(Array.from({ length: 32 }, (_, key) => [key, BigInt(key)] as const));
+		expect(map.capacity).toEqual(32);
+		expect(map.length).toEqual(32);
+		expect(() => map.set(32, 32n)).toThrow(/SharedMap is full at capacity 32/);
+		expect(map.update(31, current => (current ?? 0n) + 1n)).toEqual(32n);
+		expect(map.delete(0)).toEqual(true);
+		map.set(32, 32n);
+		expect(map.get(32)).toEqual(32n);
+		expect(map.length).toEqual(32);
 	});
 });
