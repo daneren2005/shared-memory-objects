@@ -22,7 +22,8 @@ const rows = [
 	['SharedSpatialGrid (20x20 cells)', measure(memory => new SharedSpatialGrid(memory, { bounds: bounds(1000) }))],
 	['SharedSpatialGrid (80x80 cells)', measure(memory => new SharedSpatialGrid(memory, { bounds: bounds(4000) }))],
 	['SharedSpatialMap (default)', measure(memory => new SharedSpatialMap(memory))],
-	['SharedSpatialMap (2048 buckets)', measure(memory => new SharedSpatialMap(memory, { buckets: 2048 }))],
+	['SharedSpatialMap (Float64)', measure(memory => new SharedSpatialMap(memory, { type: Float64Array }))],
+	['SharedSpatialMap (2048 buckets)',measure(memory => new SharedSpatialMap(memory, { buckets: 2048 }))],
 ];
 
 const headers = ['Structure', 'Used Memory'];

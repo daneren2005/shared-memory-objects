@@ -489,11 +489,28 @@ describe('SharedSpatialMap', () => {
 				.not.toThrow();
 		});
 
-		it('keeps large ids and coordinates exact with float64', () => {
+		it('keeps the largest uint32 id exact and removable with float64', () => {
 			let map = new SharedSpatialMap(memory, { gridSize: 50, type: Float64Array });
-			let bigId = 2 ** 40 + 7;
+			let bigId = 0xffffffff;
 			map.insert(bigId, 100, 100, 10, 10);
 			expect(map.search(90, 90, 30, 30)).toContain(bigId);
+			expect(map.has(bigId)).toBe(true);
+			map.remove(bigId);
+			expect(map.search(90, 90, 30, 30)).not.toContain(bigId);
+		});
+
+		it('rejects ids that cannot round-trip through the slot records or id map', () => {
+			let f32 = new SharedSpatialMap(memory, { gridSize: 50 });
+			expect(() => f32.insert(0x1000000 - 1, 0, 0)).not.toThrow();
+			expect(() => f32.insert(0x1000000, 0, 0)).toThrow('pass type: Float64Array');
+			expect(() => f32.update(0x1000000, 0, 0)).toThrow('must be an integer in [0, 16777216)');
+
+			let f64 = new SharedSpatialMap(memory, { gridSize: 50, type: Float64Array });
+			for(let id of [2 ** 32, -1, 1.5, NaN]) {
+				expect(() => f64.insert(id, 0, 0)).toThrow('must be an integer in [0, 4294967296)');
+			}
+			expect(() => f64.bulkInsert([{ id: 1, x: 0, y: 0 }, { id: 2 ** 33, x: 0, y: 0 }])).toThrow('must be an integer');
+			expect(f64.has(1)).toBe(false);
 		});
 
 		it('a second instance over the same memory reports the same type', () => {

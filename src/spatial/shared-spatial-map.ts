@@ -34,7 +34,8 @@ import { getSpatialMapCapacity, getSpatialPoolChunkSize, type SpatialEntity } fr
 //
 // Records are stored at the configured precision. Float32 (the default) keeps everything exact as long as entity ids and
 // both pools' index spaces stay under 2^24 (~16.7M) - every id, pool index, and the NULL sentinel is Float32 exact there
-// - and cell (col, row) stay within [-2^24, 2^24]. Need more (or ids >= 2^24)? Pass type: Float64Array.
+// - and cell (col, row) stay within [-2^24, 2^24]. Need more (or ids >= 2^24)? Pass type: Float64Array, which accepts
+// ids up to 2^32 - 1: the id->entityIndex SharedMap keys are uint32 at either precision.
 
 // Header (firstBlock) u32 layout
 const BUCKET_STACK_POINTER_INDEX = 0;
@@ -85,6 +86,7 @@ const FLOAT32_LIMIT = 0x1000000;
 // index: 2^24 for Float32 (its first non-representable index), 0xffffffff for Float64 (well within its exact range).
 const FLOAT32_NULL_INDEX = FLOAT32_LIMIT;
 const FLOAT64_NULL_INDEX = 0xffffffff;
+const UINT32_LIMIT = 0x100000000;
 
 // Odd primes for the spatial hash (Teschner et al.): mixing col and row through Math.imul then xor scatters neighbouring
 // cells across buckets so a query's cells rarely collide on one bucket.
@@ -125,6 +127,8 @@ export default class SharedSpatialMap {
 	private readonly coordType: number;
 	// Empty-bucket / end-of-list sentinel for this instance's element type (see FLOAT32_NULL_INDEX)
 	private readonly nullIndex: number;
+	// Exclusive upper bound on ids: exact in the slot records and representable as a SharedMap key
+	private readonly idLimit: number;
 	private bucketCount: number;
 	private readonly maxBucketCount: number;
 	// bucketCount-1 when bucketCount is a power of two, else -1. Lets bucketOf mask (hash & mask) instead of taking a
@@ -232,6 +236,7 @@ export default class SharedSpatialMap {
 			storeRawPointer(this.firstBlock.data, MAP_POINTER_INDEX, mapBlock.pointer);
 		}
 
+		this.idLimit = this.coordType === ARRAY_TYPE.float32 ? FLOAT32_LIMIT : UINT32_LIMIT;
 		this.bucketMask = maskFor(this.bucketCount);
 		this.tableLock = new Int32Array(
 			this.firstBlock.data.buffer,
@@ -271,6 +276,7 @@ export default class SharedSpatialMap {
 	bulkInsert(entities: Iterable<SpatialEntity>) {
 		let byId = new Map<number, SpatialEntity>();
 		for(let entity of entities) {
+			this.assertValidId(entity.id);
 			byId.set(entity.id, entity);
 		}
 		let unique = Array.from(byId.values());
@@ -330,7 +336,16 @@ export default class SharedSpatialMap {
 		this.growBucketsForBulk();
 	}
 
+	// An out-of-range id would be stored but never found again, leaving its slots unremovable
+	private assertValidId(id: number) {
+		if(!Number.isInteger(id) || id < 0 || id >= this.idLimit) {
+			throw new Error(`SharedSpatialMap id ${id} must be an integer in [0, ${this.idLimit})`
+				+ (this.coordType === ARRAY_TYPE.float32 ? '; pass type: Float64Array for ids up to 2^32 - 1' : ''));
+		}
+	}
+
 	private insertLocked(id: number, x: number, y: number, width: number, height: number) {
+		this.assertValidId(id);
 		if(this.idMap.get(id) !== undefined) {
 			this.updateLocked(id, x, y, width, height);
 			return;
