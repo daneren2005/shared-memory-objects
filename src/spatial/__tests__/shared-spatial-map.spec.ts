@@ -604,3 +604,86 @@ describe('SharedSpatialMap bucket growth stays inside its segment block', () => 
 		}
 	});
 });
+
+// Walks every bucket chain through the map's internals; mirrors the [lock, head] bucket layout in 256-bucket segments
+function collectLinkedSlots(map: SharedSpatialMap): Array<number> {
+	let pool = map['slotPool'];
+	let nullIndex = map['nullIndex'];
+	let linked: Array<number> = [];
+	for(let bucket = 0; bucket < map.buckets; bucket++) {
+		map['getBucketSegment'](bucket);
+		let heads = map['bucketHeadSegments'][bucket >>> 8]!;
+		let index = heads[(bucket & 255) * 2 + 1];
+		while(index !== nullIndex) {
+			linked.push(index);
+			index = pool.get(index, 5);
+		}
+	}
+	return linked;
+}
+
+// Non-overlapping 120x120 rects on a 200 spacing, so each spans several 50-unit cells and owns its own neighborhood
+function rectFor(id: number): Rect {
+	return { id, x: (id % 20) * 200, y: Math.floor(id / 20) * 200, width: 120, height: 120 };
+}
+
+describe.each([
+	['float32', Float32Array],
+	['float64', Float64Array],
+] as const)('SharedSpatialMap bucket resize relinks every live slot (%s)', (_name, type) => {
+	it('finds and removes every entity after single inserts force several doublings', () => {
+		let map = new SharedSpatialMap(new MemoryHeap(), { gridSize: 50, buckets: 4, type });
+		let rects: Array<Rect> = [];
+		for(let id = 0; id < 300; id++) {
+			let rect = rectFor(id);
+			rects.push(rect);
+			map.insert(rect.id, rect.x, rect.y, rect.width, rect.height);
+		}
+		expect(map.buckets).toBeGreaterThanOrEqual(4096);
+
+		for(let rect of rects) {
+			expect(map.search(rect.x + 10, rect.y + 10, 20, 20)).toEqual([rect.id]);
+			expect(map.neighbors(rect.x + 60, rect.y + 60, 1, 10)).toEqual([rect.id]);
+		}
+		expect(collectLinkedSlots(map).length).toEqual(map['slotPool'].length);
+
+		for(let rect of rects) {
+			expect(map.remove(rect.id)).toBe(true);
+		}
+		expect(collectLinkedSlots(map)).toEqual([]);
+		expect(map.search(0, 0, 4000, 4000)).toEqual([]);
+	});
+
+	it('skips recycled slots when resizing', () => {
+		let map = new SharedSpatialMap(new MemoryHeap(), { gridSize: 50, buckets: 64, type });
+		for(let id = 0; id < 100; id++) {
+			let rect = rectFor(id);
+			map.insert(rect.id, rect.x, rect.y, rect.width, rect.height);
+		}
+		let removed = new Set<number>();
+		for(let id = 0; id < 100; id += 3) {
+			map.remove(id);
+			removed.add(id);
+		}
+
+		// bulkInsert sizes the table before reserving fresh slots, so this resize runs with the recycled slots still pooled
+		let bucketsBefore = map.buckets;
+		let added: Array<Rect> = [];
+		for(let id = 100; id < 400; id++) {
+			added.push(rectFor(id));
+		}
+		map.bulkInsert(added);
+		expect(map.buckets).toBeGreaterThan(bucketsBefore);
+
+		let recycled = map['slotPool'].getRecycledMask();
+		expect(recycled.includes(1)).toBe(true);
+		let linked = collectLinkedSlots(map);
+		expect(linked.filter(index => recycled[index] === 1)).toEqual([]);
+		expect(linked.length).toEqual(map['slotPool'].length);
+
+		for(let id = 0; id < 400; id++) {
+			let rect = rectFor(id);
+			expect(map.search(rect.x + 10, rect.y + 10, 20, 20)).toEqual(removed.has(id) ? [] : [id]);
+		}
+	});
+});

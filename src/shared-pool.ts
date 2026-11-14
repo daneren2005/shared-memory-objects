@@ -256,6 +256,19 @@ export default class SharedPool<T extends NumericArray = Uint32Array> implements
 		this.recycleStack.clear();
 	}
 
+	// Flags recycled indexes up to the allocated length (the mask's length). Lets a caller walk chunks directly via
+	// blockFor instead of paying entries()'s per-record generator, tuple and subarray.
+	getRecycledMask(): Uint8Array {
+		const length = Atomics.load(this.firstBlock.data, LENGTH_INDEX);
+		const recycled = new Uint8Array(length);
+		for(let index of this.recycleStack) {
+			if(index < length) {
+				recycled[index] = 1;
+			}
+		}
+		return recycled;
+	}
+
 	*[Symbol.iterator]() {
 		const recycledValues: { [key: number]: true } = {};
 		for(let value of this.recycleStack) {

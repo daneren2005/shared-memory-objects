@@ -789,12 +789,26 @@ export default class SharedSpatialMap {
 
 		this.bucketCount = newBucketCount;
 		this.bucketMask = maskFor(newBucketCount);
-		for(let [slotIndex, slot] of this.slotPool.entries()) {
-			let bucket = this.bucketOf(slot[SLOT_COL], slot[SLOT_ROW]);
-			let heads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
-			let headIndex = this.bucketOffset(bucket) + BUCKET_HEAD_OFFSET;
-			slot[SLOT_NEXT] = heads[headIndex];
-			heads[headIndex] = slotIndex;
+		// The table write lock excludes every writer, so the length snapshot in the mask holds. Recycled slots are in no
+		// chain and carry a stale SLOT_NEXT, so they must be skipped.
+		let pool = this.slotPool;
+		let recycled = pool.getRecycledMask();
+		let length = recycled.length;
+		let chunkSize = pool.maxChunkSize;
+		for(let base = 0; base < length; base += chunkSize) {
+			let block = pool.blockFor(base);
+			let end = Math.min(base + chunkSize, length);
+			for(let slotIndex = base; slotIndex < end; slotIndex++) {
+				if(recycled[slotIndex] === 1) {
+					continue;
+				}
+				let slotOffset = (slotIndex - base) * SLOT_FIELDS;
+				let bucket = this.bucketOf(block[slotOffset + SLOT_COL], block[slotOffset + SLOT_ROW]);
+				let heads = this.bucketHeadSegments[bucket >>> BUCKET_SEGMENT_SHIFT]!;
+				let headIndex = this.bucketOffset(bucket) + BUCKET_HEAD_OFFSET;
+				block[slotOffset + SLOT_NEXT] = heads[headIndex];
+				heads[headIndex] = slotIndex;
+			}
 		}
 		Atomics.store(this.firstBlock.data, BUCKET_COUNT_INDEX, newBucketCount);
 	}

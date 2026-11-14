@@ -147,6 +147,19 @@ describe('SharedPool', () => {
 		expect(flat(vector)).toEqual([97]);
 	});
 
+	it('getRecycledMask flags recycled indexes up to the allocated length', () => {
+		let pool = new SharedPool(memory, { maxChunkSize: 4 });
+		for(let i = 0; i < 10; i++) {
+			pool.push(i);
+		}
+		pool.deleteIndex(2);
+		pool.deleteIndex(7);
+
+		expect([...pool.getRecycledMask()]).toEqual([0, 0, 1, 0, 0, 0, 0, 1, 0, 0]);
+		pool.push(99);
+		expect([...pool.getRecycledMask()]).toEqual([0, 0, 1, 0, 0, 0, 0, 0, 0, 0]);
+	});
+
 	it('with dataLength: 3', () => {
 		let vector = new SharedPool(memory, {
 			type: Uint32Array,
